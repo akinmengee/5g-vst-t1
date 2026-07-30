@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pydantic>=2.0
+pydantic-settings
+python-multipart
+websockets
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+opencv-python-headless
+numpy
+ultralytics
+mediapipe
+torch
+torchvision
