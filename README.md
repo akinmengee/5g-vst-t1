@@ -204,14 +204,28 @@ paylaşılmadığı için) — güncellenmiş modeller geldiğinde sadece
   mobil veri üreticisi. **Tamamlandı ve doğrulandı** (yukarıdaki mock test).
 - [x] **Gün 2-3 — Yürüyen iskelet:** Mock veri → WebSocket → backend → geçerli JSON
   cevabı uçtan uca çalışıyor.
-- [ ] **Gün 4-7 — Asıl mühendislik:** `_ftr_reference/predict.py`'deki batch/video-sonu
-  mantığının gerçek zamanlı (incremental) hale getirilmesi, gerçek modellerin
-  bağlanması, bilinen hataların düzeltilmesi (model yükleme güvenliği, bellek
-  sızıntısı, gereksiz tekrar çıkarımlar).
-- [ ] **Gün 8-9 — Sağlamlaştırma:** Tespit eşiklerinin ayarlanması, gerçek telefonda
-  test, kuru provalar, sunum hazırlığı.
+- [x] **Gün 4-7 — Asıl mühendislik:** Batch/video-sonu mantığı gerçek zamanlı
+  (incremental) hale getirildi, 15 modelin tamamı bağlandı (GPU), bilinen hatalar
+  düzeltildi. **202 test geçiyor** — bunların çoğu, yeni streaming mantığının eski
+  batch mantığıyla *birebir aynı* sonucu ürettiğini kanıtlıyor.
+- [ ] **Gün 8-9 — Sağlamlaştırma:** Tespit eşiklerinin gerçek videoyla ayarlanması,
+  gerçek telefonda test, kuru provalar, sunum hazırlığı.
 - [ ] **Yarışma günü (7-9 Ağustos):** Gerçek Turkcell 5G API'lerinin ve (varsa) bulut
   ortamının bağlanması.
+
+### Testleri çalıştırma
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest tests/ -q
+```
+
+- `tests/test_streaming_equivalence.py` — yeni gerçek-zamanlı dedektörlerin, FTR'de
+  teslim edilen batch mantığıyla aynı sonucu ürettiğinin kanıtı (rastgele üretilmiş
+  yüzlerce senaryo ile).
+- `tests/test_service_pipeline.py` — ROI akışı mantığının uçtan uca doğrulaması
+  (sahte modellerle, böylece beklenen tespitin çıkması *kesin* olarak test edilir).
 
 Tüm bu adımların gerekçesi, alınan mimari kararlar, risk kaydı ve doğrulama planı için
 bkz. **[`PLAN.md`](./PLAN.md)**.

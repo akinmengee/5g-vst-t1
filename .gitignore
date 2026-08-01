@@ -27,3 +27,5 @@ mobile/.flutter-plugins-dependencies
 # OS
 .DS_Store
 Thumbs.db
+
+.pytest_cache/

@@ -1,0 +1,3 @@
+# Geliştirme/test bağımlılıkları (Docker imajına dahil edilmez)
+-r requirements.txt
+pytest
