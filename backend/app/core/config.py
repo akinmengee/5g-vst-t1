@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -36,10 +35,8 @@ class Settings(BaseSettings):
     # (örn. http://192.168.1.50:8000).
     public_base_url: str = "http://localhost:8000"
 
-    # AI imajını tetikleme modu: "mock" (fixture results.json kopyalar) veya
-    # "docker" (gerçek `docker run teknofest-2026/vst-t1`). USE_MOCK_5G ile aynı
-    # ilke: bilinçli deploy-zamanı seçimi, sessiz fallback yok.
-    ai_runner_mode: Literal["mock", "docker"] = "mock"
+    # Tetiklenecek AI imajı. Sahte bir çalıştırıcı yoktur — AI çıktısı puanlanan
+    # şeyin kendisi olduğu için her zaman gerçek imaj çalışır.
     ai_docker_image: str = "teknofest-2026/vst-t1:latest"
     job_storage_path: Path = Path("/srv/jobs")
     # Hakem değerlendirmesindeki inference limitiyle tutarlı (Doküman 1 madde 5).

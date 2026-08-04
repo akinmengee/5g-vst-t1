@@ -1,6 +1,5 @@
 import 'package:dio/dio.dart';
 
-import '../config/app_config.dart';
 import '../models/qod_session.dart';
 import 'api_client.dart';
 
@@ -11,8 +10,6 @@ class QodService {
   final Dio _dio = ApiClient.instance.dio;
 
   Future<QodSession> startSession({required String flowId}) async {
-    if (AppConfig.useMock) return _mockStartSession();
-
     try {
       final response = await _dio.post('/api/qod/start', data: {'flow_id': flowId});
       final success = (response.data['success'] as bool? ?? false) ||
@@ -36,16 +33,5 @@ class QodService {
       default:
         return QodStatus.requested;
     }
-  }
-
-  Future<QodSession> _mockStartSession() async {
-    await Future.delayed(const Duration(milliseconds: 700));
-    ApiClient.instance.traceLog.record(
-      method: 'POST',
-      path: '/api/qod/start',
-      duration: const Duration(milliseconds: 340),
-      statusCode: 200,
-    );
-    return const QodSession(status: QodStatus.requested, sessionId: 'mock-qod-session');
   }
 }

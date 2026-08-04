@@ -66,12 +66,15 @@ flutter run --dart-define=BACKEND_URL=http://localhost:8000
 flutter test test/backend_integration_test.dart   # gerçek servis kodu, gerçek backend
 ```
 
+**Mobil tarafta sahte veri modu YOKTUR** — `AppConfig.useMock` ve servislerdeki
+mock dalları kaldırıldı. Her çağrı gerçek backend'e gider; backend yoksa hata
+görürsün, uydurma sonuç değil. Geri eklemek isteme: sahte yanıtlar tam da
+gerçek entegrasyon hatalarını gizleyen şeydi.
+
 Backend `USE_MOCK_5G=true` iken bile NV/QoD/upload zincirinin **tamamı**
 gerçek HTTP ile çalışır — `authorize_url`, backend'in kendi sahte onay
 sayfasına (`/api/auth/mock-consent`) gider ve callback'e yönlendirir. Yani
-"mock mod" gerçek Turkcell'i taklit eder, mobil kodunu değil; `AppConfig.useMock`
-tamamen ayrı bir şeydir (yalnızca backend hiç ayakta değilken UI denemek için,
-bkz. `app_config.dart`).
+orada taklit edilen Turkcell'in kendisidir, bizim kodumuz değil.
 
 ## Henüz gerçek ortamda doğrulanmadı
 

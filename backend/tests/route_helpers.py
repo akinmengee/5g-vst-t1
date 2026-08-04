@@ -8,21 +8,14 @@ gibi döndürür. Bu örüntü ilk kez burada kullanılıyor; route testlerinin
 tamamı bu helper üzerinden geçer.
 """
 
-from pathlib import Path
-
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.services.network import runtime as network_runtime
 from app.services.orchestration import runtime as orch_runtime
-from app.services.orchestration.ai_runner import MockAiRunner
 from app.services.orchestration.flow_state import FlowRegistry
 from app.services.orchestration.job_state import JobRegistry
-
-FIXTURE_RESULTS = (
-    Path(__file__).resolve().parents[1]
-    / "app" / "fixtures" / "mock_ai_results" / "results.json"
-)
+from tests.ai_stubs import BasariliRunner
 
 
 def taze_ortam(monkeypatch, tmp_path, *, gateway=None, runner=None) -> TestClient:
@@ -34,7 +27,7 @@ def taze_ortam(monkeypatch, tmp_path, *, gateway=None, runner=None) -> TestClien
     monkeypatch.setattr(
         orch_runtime,
         "_ai_runner",
-        runner if runner is not None else MockAiRunner(FIXTURE_RESULTS, delay_seconds=0.0),
+        runner if runner is not None else BasariliRunner(),
     )
     # Semaphore her testte sıfırlanır ki farklı event loop'lara bağlanma
     # (asyncio "bound to a different event loop") hatası oluşmasın.

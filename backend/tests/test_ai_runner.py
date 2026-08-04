@@ -1,20 +1,16 @@
-"""AiRunner birim testleri.
+"""DockerAiRunner'ın HATA dalları.
 
-DockerAiRunner.run() gerçek bir `docker run` ile uçtan uca TEST EDİLMİYOR —
-teknofest-2026/vst-t1 imajı henüz yok (ayrı fazın işi). Burada yalnızca
-timeout / non-zero-exit / eksik-results.json dalları, subprocess sahte bir
-process ile değiştirilerek doğrulanır; gerçek imaj hazır olunca
-AI_RUNNER_MODE=docker ile elle uçtan uca doğrulama yapılacak.
+Mutlu yol burada test edilmez: gerçek imajı çalıştırmak dakikalar sürer ve GPU
+ister — o, `docker run` ile elle/entegrasyon olarak doğrulanır. Buradaki
+testler, gerçek imaj patladığında backend'in sessizce "başarılı" saymadığını
+garanti eder (timeout / sıfır-dışı çıkış / results.json üretilmemesi).
 """
 
 import asyncio
-import json
 
 import pytest
 
-from app.schemas.detection import SonucJson
-from app.services.orchestration.ai_runner import AiRunnerError, DockerAiRunner, MockAiRunner
-from tests.route_helpers import FIXTURE_RESULTS
+from app.services.orchestration.ai_runner import AiRunnerError, DockerAiRunner
 
 
 class _SahteProc:
@@ -47,17 +43,6 @@ def _docker_runner(monkeypatch, proc: _SahteProc) -> DockerAiRunner:
     runner = DockerAiRunner(image="teknofest-2026/vst-t1:latest", timeout_seconds=600)
     runner._timeout = 0.05  # test hızı için kısaltılır
     return runner
-
-
-def test_mock_ai_runner_results_json_uretir_ve_sonuc_schema_ile_uyumlu(tmp_path):
-    """MockAiRunner'ın kopyaladığı fixture, resmi SonucJson şemasından geçer."""
-    runner = MockAiRunner(FIXTURE_RESULTS, delay_seconds=0.0)
-    output_dir = tmp_path / "output"
-    asyncio.run(runner.run("test-job", tmp_path / "video.mp4", output_dir))
-    raw = json.loads((output_dir / "results.json").read_text(encoding="utf-8"))
-    sonuc = SonucJson.model_validate(raw)
-    assert sonuc.video_id == "mock-video"
-    assert sonuc.arac_bilgisi.tip == "sedan"
 
 
 def test_docker_runner_zaman_asiminda_kill_edilir_ve_hata_firlatir(monkeypatch, tmp_path):

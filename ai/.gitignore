@@ -1,48 +1,19 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
+# Model ağırlıkları — büyük binary dosyalar (bu klasörde şu an ~230MB),
+# git'e girmez, ayrı paylaşılır. Kökteki *.pt (örn. yanlışlıkla ai/ köküne
+# düşen yolo11n.pt gibi) de dahil.
+weights/*.pt
+weights/*.task
+*.pt
 
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
-.idea/
+# Ultralytics YOLO, predict()/track() çağrılarında varsayılan olarak buraya
+# görselleştirilmiş çıktı (kutu çizilmiş kare/video) yazar — save=False
+# verilmediği sürece oluşur, yerel denemede sürekli çıkar.
+runs/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-/coverage/
-
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
+# Docker imajının kendi içinde kullandığı input/output klasörleri; yerel
+# (konteynersiz) denemede de aynı yollar oluşabilir.
+data/input/
+data/output/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -291,3 +262,4 @@ mobile/.flutter-plugins-dependencies
 # OS
 .DS_Store
 Thumbs.db
+

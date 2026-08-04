@@ -3,9 +3,8 @@ import 'package:flutter/foundation.dart';
 
 import '../models/trace_entry.dart';
 
-/// Tüm NV/QoD/upload/AI çağrılarının tek ortak izi. Gerçek modda
-/// [TraceInterceptor] üzerinden, mock modda servislerin kendi
-/// `record()` çağrılarından besleniyor — ikisi de aynı görünümü üretir.
+/// Tüm NV/QoD/upload/AI çağrılarının tek ortak izi; [TraceInterceptor]
+/// üzerinden gerçek HTTP istek/yanıtlarından beslenir.
 class TraceLog extends ChangeNotifier {
   final List<TraceEntry> entries = [];
 
@@ -20,25 +19,6 @@ class TraceLog extends ChangeNotifier {
     entry.duration = DateTime.now().difference(entry.startedAt);
     entry.statusCode = statusCode;
     entry.status = error ? TraceStatus.error : TraceStatus.success;
-    notifyListeners();
-  }
-
-  /// Mock servisler için: tamamlanmış bir çağrıyı doğrudan (simüle edilmiş
-  /// süreyle) ekler.
-  void record({
-    required String method,
-    required String path,
-    required Duration duration,
-    required int statusCode,
-  }) {
-    entries.add(TraceEntry(
-      method: method,
-      path: path,
-      startedAt: DateTime.now().subtract(duration),
-      duration: duration,
-      statusCode: statusCode,
-      status: TraceStatus.success,
-    ));
     notifyListeners();
   }
 

@@ -11,20 +11,19 @@ paylaşımı → AI sonucu gösterimi.
 
 ```bash
 flutter pub get
-flutter run                     # gerçek backend, http://localhost:8000
+flutter run                     # backend: http://localhost:8000
 flutter build apk --release     # final günü yüklenecek APK
 ```
 
-Backend adresi ve mock modu `--dart-define` ile verilir (`lib/config/app_config.dart`);
+Backend adresi `--dart-define` ile verilir (`lib/config/app_config.dart`);
 yarışma günü kod düzenlemeye gerek yok:
 
 ```bash
-# Backend başka bir makinede / telefonla test:
 flutter run --dart-define=BACKEND_URL=http://192.168.1.50:8000
-
-# Backend hiç yokken sadece UI denemek:
-flutter run --dart-define=USE_MOCK=true
 ```
+
+**Sahte (mock) veri modu yoktur** — her çağrı gerçek backend'e gider. Backend
+ayakta değilse uygulama hata gösterir, uydurma sonuç göstermez.
 
 > Gerçek telefonda `localhost` **telefonun kendisini** işaret eder, backend'in
 > çalıştığı bilgisayarı değil — mutlaka makinenin LAN IP'sini verin. Backend'in

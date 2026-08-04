@@ -1,13 +1,17 @@
-/// Yarışma günü değişecek tek yer burası: backend adresi ve mock modu.
+/// Yarışma günü değişecek tek yer burası: backend adresi.
 ///
-/// İkisi de `--dart-define` ile çalıştırma zamanında verilir; kod düzenlemeden
-/// mod değiştirilebilir (yarışma günü yanlış sabitle build alma riski yok):
+/// `--dart-define` ile çalıştırma zamanında verilir; kod düzenlemeden
+/// değiştirilebilir (yarışma günü yanlış sabitle build alma riski yok):
 ///
 /// ```
-/// flutter run                                          # gerçek backend, localhost
+/// flutter run                                          # localhost:8000
 /// flutter run --dart-define=BACKEND_URL=http://192.168.1.50:8000
-/// flutter run --dart-define=USE_MOCK=true              # backend olmadan UI denemesi
 /// ```
+///
+/// Sahte (mock) veri modu YOKTUR: her çağrı gerçek backend'e gider. Backend
+/// kendi tarafında `USE_MOCK_5G=true` ile çalışırken bile HTTP akışının tamamı
+/// (WebView + callback + polling) gerçektir — taklit edilen yalnızca Turkcell'in
+/// kendisidir, bizim kodumuz değil.
 class AppConfig {
   AppConfig._();
 
@@ -22,15 +26,6 @@ class AppConfig {
     'BACKEND_URL',
     defaultValue: 'http://localhost:8000',
   );
-
-  /// true iken NvService/QodService/ResultsService gerçek ağ çağrısı yapmaz,
-  /// UX kılavuzundaki akışı simüle eden sahte gecikmeli yanıtlar döner.
-  ///
-  /// Backend `USE_MOCK_5G=true` ile çalışırken buranın da true olması GEREKMEZ:
-  /// o durumda gerçek HTTP akışının tamamı (WebView + callback + polling dahil)
-  /// Turkcell olmadan çalışır. Burası yalnızca backend hiç yokken UI denemek
-  /// içindir.
-  static const bool useMock = bool.fromEnvironment('USE_MOCK');
 
   /// Open Gateway Demo UX Kılavuzu'ndaki sandbox test numarası.
   static const String sandboxTestPhoneNumber = '+905390000020';

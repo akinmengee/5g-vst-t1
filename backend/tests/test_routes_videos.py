@@ -10,15 +10,10 @@ import asyncio
 
 from app.core.config import settings
 from app.services.orchestration import job_executor
-from app.services.orchestration.ai_runner import AiRunnerError, MockAiRunner
 from app.services.orchestration.runtime import get_job_registry
+from tests.ai_stubs import BasariliRunner, PatlayanRunner
 from tests.network_stubs import FakeOpenGatewayClient
-from tests.route_helpers import FIXTURE_RESULTS, flow_yarat, taze_ortam
-
-
-class _PatlayanRunner:
-    async def run(self, job_id, input_video_path, output_dir):
-        raise AiRunnerError("kasıtlı test hatası")
+from tests.route_helpers import flow_yarat, taze_ortam
 
 
 def _job_hazirla(tmp_path, job_id: str):
@@ -66,7 +61,7 @@ def test_bilinmeyen_flow_ile_upload_404_doner(monkeypatch, tmp_path):
 
 def test_sonuc_ai_bitmeden_processing_doner(monkeypatch, tmp_path):
     """AI çalışması sürerken sonuç sorgusu PROCESSING döner."""
-    yavas = MockAiRunner(FIXTURE_RESULTS, delay_seconds=30.0)
+    yavas = BasariliRunner(gecikme=30.0)
     client = taze_ortam(monkeypatch, tmp_path, gateway=FakeOpenGatewayClient(), runner=yavas)
     fid = flow_yarat(client)
     job_id = client.post(
@@ -86,14 +81,14 @@ def test_ai_basarili_bitince_status_done_ve_sonuc_doner(monkeypatch, tmp_path):
     asyncio.run(job_executor._execute("test-job-done", video_path, output_dir))
     body = client.get("/api/videos/test-job-done/result").json()
     assert body["status"] == "DONE"
-    assert body["results"]["video_id"] == "mock-video"
+    assert body["results"]["video_id"] == "video.mp4"
     assert body["results"]["arac_bilgisi"]["plaka"] == "34ABC123"
 
 
 def test_ai_hata_verirse_status_failed_doner(monkeypatch, tmp_path):
     """AiRunnerError job'ı FAILED yapar, endpoint çökmez."""
     client = taze_ortam(
-        monkeypatch, tmp_path, gateway=FakeOpenGatewayClient(), runner=_PatlayanRunner()
+        monkeypatch, tmp_path, gateway=FakeOpenGatewayClient(), runner=PatlayanRunner()
     )
     video_path, output_dir = _job_hazirla(tmp_path, "test-job-fail")
     asyncio.run(job_executor._execute("test-job-fail", video_path, output_dir))

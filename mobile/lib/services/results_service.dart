@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
-import '../config/app_config.dart';
 import '../models/ai_result.dart';
 import 'api_client.dart';
 
@@ -32,17 +31,6 @@ class ResultsService {
     required String flowId,
     required String filePath,
   }) async {
-    if (AppConfig.useMock) {
-      await Future.delayed(const Duration(milliseconds: 800));
-      ApiClient.instance.traceLog.record(
-        method: 'POST',
-        path: '/api/videos/upload',
-        duration: const Duration(milliseconds: 780),
-        statusCode: 202,
-      );
-      return const UploadResult(success: true, jobId: 'mock-job-1');
-    }
-
     try {
       final formData = FormData.fromMap({
         'flow_id': flowId,
@@ -68,21 +56,6 @@ class ResultsService {
   }
 
   Future<FetchResultResponse> fetchResult(String jobId) async {
-    if (AppConfig.useMock) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      ApiClient.instance.traceLog.record(
-        method: 'GET',
-        path: '/api/videos/$jobId/result',
-        duration: const Duration(milliseconds: 480),
-        statusCode: 200,
-      );
-      return FetchResultResponse(
-        status: AiResultStatus.done,
-        result: AiResult.fromJson(_mockResultsJson),
-        resultsSha256: _sha256Of(_mockResultsJson),
-      );
-    }
-
     try {
       final response = await _dio.get('/api/videos/$jobId/result');
       final statusStr = response.data['status'] as String? ?? 'PROCESSING';
@@ -118,12 +91,3 @@ class ResultsService {
     return sha256.convert(utf8.encode(jsonEncode(results))).toString();
   }
 }
-
-const _mockResultsJson = {
-  'video_id': 'video.mp4',
-  'arac_bilgisi': {'tip': 'sedan', 'plaka': '34ABC123', 'renk': 'beyaz', 'confidence_score': 0.94},
-  'tespitler': [
-    {'zaman_saniye': 14.5, 'kategori': 'sofor_eylemi', 'etiket': 'telefonla_konusma', 'confidence_score': 0.89},
-    {'zaman_saniye': 22.0, 'kategori': 'sofor_eylemi', 'etiket': 'emniyet_kemeri_ihlali', 'confidence_score': 0.91},
-  ],
-};

@@ -7,16 +7,15 @@ açılışta anında görünür.
 """
 
 import asyncio
-from pathlib import Path
 
 from app.core.config import settings
-from app.services.orchestration.ai_runner import AiRunner, DockerAiRunner, MockAiRunner
+from app.services.orchestration.ai_runner import DockerAiRunner
 from app.services.orchestration.flow_state import FlowRegistry
 from app.services.orchestration.job_state import JobRegistry
 
 _flow_registry: FlowRegistry | None = None
 _job_registry: JobRegistry | None = None
-_ai_runner: AiRunner | None = None
+_ai_runner: DockerAiRunner | None = None
 _ai_semaphore: asyncio.Semaphore | None = None
 
 
@@ -34,20 +33,13 @@ def get_job_registry() -> JobRegistry:
     return _job_registry
 
 
-def get_ai_runner() -> AiRunner:
+def get_ai_runner() -> DockerAiRunner:
     global _ai_runner
     if _ai_runner is None:
-        if settings.ai_runner_mode == "docker":
-            _ai_runner = DockerAiRunner(
-                image=settings.ai_docker_image,
-                timeout_seconds=settings.job_timeout_seconds,
-            )
-        else:
-            fixture = (
-                Path(__file__).resolve().parents[2]
-                / "fixtures" / "mock_ai_results" / "results.json"
-            )
-            _ai_runner = MockAiRunner(fixture_path=fixture)
+        _ai_runner = DockerAiRunner(
+            image=settings.ai_docker_image,
+            timeout_seconds=settings.job_timeout_seconds,
+        )
     return _ai_runner
 
 
