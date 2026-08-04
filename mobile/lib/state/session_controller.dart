@@ -391,7 +391,6 @@ class SessionController extends ChangeNotifier {
     if (recording) {
       _recordingService.stopRecording();
     }
-    _nvService.resetMockState();
     nvSession = const NvSession();
     nvLoading = false;
     qodSession = const QodSession();

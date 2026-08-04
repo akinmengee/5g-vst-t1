@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../config/app_config.dart';
 import '../models/qod_session.dart';
 import '../services/bandwidth_probe_service.dart';
 import '../theme/app_theme.dart';
@@ -227,15 +226,6 @@ class _BandwidthImpact extends StatelessWidget {
               Text('Sonra ölçülüyor…', style: TextStyle(fontSize: 12, color: AppTheme.inkSoft)),
             ],
           ),
-        if (after != null && AppConfig.useMock) ...[
-          const SizedBox(height: 8),
-          const Text(
-            'Not: mock modda QoD çağrısı da simüle — bu fark ağ dalgalanmasından '
-            'olabilir, gerçek backend bağlanınca bu ölçüm QoD\'nin kanıtı olur.',
-            style: TextStyle(
-                fontSize: 10.5, color: AppTheme.inkSoft, fontStyle: FontStyle.italic),
-          ),
-        ],
       ],
     );
   }

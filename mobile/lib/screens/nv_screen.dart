@@ -6,7 +6,6 @@ import '../models/nv_session.dart';
 import '../state/session_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hero_background.dart';
-import '../widgets/mock_mode_banner.dart';
 import 'home_screen.dart';
 import 'nv_webview_screen.dart';
 
@@ -78,7 +77,6 @@ class _NvScreenState extends State<NvScreen> {
           bottom: false,
           child: Column(
             children: [
-              if (AppConfig.useMock) const MockModeBanner(),
               Expanded(
                 child: Stack(
                   children: [

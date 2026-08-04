@@ -28,7 +28,6 @@ class RecordingResult {
 /// kullanıcı istediği kadar kayıt alıp listeden yönetebilir.
 class VideoRecordingService {
   int? _activeSessionId;
-  int _webMockSayac = 0;
 
   static String _damga(DateTime t) {
     String iki(int v) => v.toString().padLeft(2, '0');
@@ -62,25 +61,12 @@ class VideoRecordingService {
     required String hlsUrl,
     void Function(Duration elapsed)? onProgress,
   }) async {
-    // Web önizlemede (Chrome/web-server) ffmpeg_kit yok — mock moddayken
-    // kayıt 3 sn'lik simülasyonla tamamlanır ki NV→QoD→kayıt→upload→AI akışı
-    // tarayıcıda uçtan uca gezilebilsin. Gerçek cihazda (Android) bu blok
-    // hiç çalışmaz; mock kapalıyken de web'de gerçekçi bir hata verilir.
+    // ffmpeg_kit yalnızca mobil platformlarda var — web'de (tarayıcı
+    // önizlemesi) kayıt açıkça hata verir, sessizce takılı kalmaz.
     if (kIsWeb) {
-      if (!AppConfig.useMock) {
-        return const RecordingResult(
-          status: RecordingStatus.failed,
-          errorMessage: 'HLS kaydı yalnızca Android cihazda çalışır (ffmpeg).',
-        );
-      }
-      _webMockSayac++;
-      for (var i = 1; i <= 3; i++) {
-        await Future.delayed(const Duration(seconds: 1));
-        onProgress?.call(Duration(seconds: i));
-      }
-      return RecordingResult(
-        status: RecordingStatus.completed,
-        filePath: 'kayit_web_$_webMockSayac.mp4',
+      return const RecordingResult(
+        status: RecordingStatus.failed,
+        errorMessage: 'HLS kaydı yalnızca Android cihazda çalışır (ffmpeg).',
       );
     }
 

@@ -1,12 +1,11 @@
-/// Yarışma günü değişecek tek yer burası: backend adresi ve mock modu.
+/// Yarışma günü değişecek tek yer burası: backend adresi.
 ///
-/// İkisi de `--dart-define` ile çalıştırma zamanında verilir; kod düzenlemeden
-/// mod değiştirilebilir (yarışma günü yanlış sabitle build alma riski yok):
+/// Adres `--dart-define` ile çalıştırma zamanında verilir; kod düzenlemeden
+/// ortam değiştirilebilir (yarışma günü yanlış sabitle build alma riski yok):
 ///
 /// ```
-/// flutter run                                          # gerçek backend, localhost
+/// flutter run                                          # localhost'taki backend
 /// flutter run --dart-define=BACKEND_URL=http://192.168.1.50:8000
-/// flutter run --dart-define=USE_MOCK=true              # backend olmadan UI denemesi
 /// ```
 class AppConfig {
   AppConfig._();
@@ -23,15 +22,6 @@ class AppConfig {
     defaultValue: 'http://localhost:8000',
   );
 
-  /// true iken NvService/QodService/ResultsService gerçek ağ çağrısı yapmaz,
-  /// UX kılavuzundaki akışı simüle eden sahte gecikmeli yanıtlar döner.
-  ///
-  /// Backend `USE_MOCK_5G=true` ile çalışırken buranın da true olması GEREKMEZ:
-  /// o durumda gerçek HTTP akışının tamamı (WebView + callback + polling dahil)
-  /// Turkcell olmadan çalışır. Burası yalnızca backend hiç yokken UI denemek
-  /// içindir (telefon demo APK'sı ve web önizleme paketi bu bayrakla derlenir).
-  static const bool useMock = bool.fromEnvironment('USE_MOCK');
-
   /// Open Gateway Demo UX Kılavuzu'ndaki sandbox test numarası.
   static const String sandboxTestPhoneNumber = '+905390000020';
 
@@ -43,7 +33,7 @@ class AppConfig {
   /// Şartname: "maksimum 5 dakika içerisinde videonun tamamını kaydetmesi".
   static const Duration maxRecordingDuration = Duration(minutes: 5);
 
-  /// Sözleşme § 2.3 / § 2.6: NV durumu ~1 sn, AI sonucu 1-2 sn arayla pollenir.
+  /// Sözleşme § 2.3 / § 2.6: NV durumu ~1 sn, sonuç 1-2 sn arayla pollenir.
   static const Duration nvPollInterval = Duration(seconds: 1);
   static const Duration aiPollInterval = Duration(seconds: 2);
 

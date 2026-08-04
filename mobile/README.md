@@ -1,46 +1,50 @@
-# teknofest_mobile — VST T1 5G & YZ Akıllı Yol Güvenliği
+# VST-T1 — TEKNOFEST 2026 5G Yol Güvenliği (mobil)
 
-TEKNOFEST 2026 finali için mobil uygulama. Akış: Number Verification → Quality
-on Demand → HLS stream kaydı (maks. 5 dk, MP4) → backend'e yükleme + Lifebox
-paylaşımı → AI sonucu gösterimi. Detaylar için `../API_CONTRACT_DRAFT.md`.
-
-## Ortam
-
-Bu makinede Homebrew ile kuruldu: `flutter`, `android-commandlinetools`,
-`openjdk@17`. `~/.zshrc`'ye eklenen PATH/JAVA_HOME satırları yeni terminal
-oturumlarında otomatik devreye giriyor. Yeniden kurmak gerekirse:
-
-```
-brew install --cask flutter android-commandlinetools
-brew install openjdk@17
-sdkmanager "platform-tools" "platforms;android-35" "platforms;android-36" \
-  "build-tools;35.0.0" "build-tools;28.0.3"
-```
+Final akışının mobil ayağı: Number Verification → Quality on Demand → HLS
+stream kaydı (maks. 5 dk, MP4) → backend'e yükleme + Lifebox paylaşımı →
+video başına tespit sonuçları. Backend sözleşmesinin tek doğruluk kaynağı:
+`../docs/mobile-integration.md`.
 
 ## Çalıştırma
 
+Backend adresi çalıştırma zamanında verilir, koda gömülmez:
+
 ```
 flutter pub get
-flutter run                 # bağlı bir Android cihaz/emülatör gerekir
-flutter build apk --debug   # final günü yüklenecek APK için: --release
+flutter run                                            # localhost:8000'deki backend
+flutter run --dart-define=BACKEND_URL=http://192.168.1.50:8000
 ```
 
-## Mock mod
+Gerçek telefonda `localhost` telefonun kendisidir — bilgisayarın LAN IP'sini
+verin ve backend'i aynı adresle (`PUBLIC_BASE_URL`) çalıştırın; mock onay
+sayfası WebView'i o adres üzerinden callback'e yönlendirir:
 
-`lib/config/app_config.dart` içindeki `AppConfig.useMock = true` iken hiçbir
-gerçek backend/Turkcell çağrısı yapılmaz; NV/QoD/upload/AI-result akışının
-tamamı sahte gecikmeli yanıtlarla simüle edilir. Akın'ın backend'i hazır
-olunca `useMock = false` yapıp `backendBaseUrl`'i güncelleyin.
+```
+cd backend
+JOB_STORAGE_PATH=./.local-jobs USE_MOCK_5G=true PUBLIC_BASE_URL=http://192.168.1.50:8000 \
+  python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
-## Bilinen riskler / henüz test edilmedi
+## Test
+
+```
+flutter test                                  # birim + widget; backend kapalıysa
+                                              # entegrasyon testleri kendini atlar
+flutter test test/backend_integration_test.dart   # gerçek servis kodu, gerçek backend
+```
+
+## Dağıtım
+
+```
+flutter build apk --release              # tüm mimariler tek APK (~220 MB)
+flutter build apk --release --split-per-abi   # cihaz başına küçük APK (arm64 ~62 MB)
+```
+
+## Bilinen riskler / henüz doğrulanmadı
 
 - **Cellular network bind** (`android/.../MainActivity.kt`): NV'nin
-  `/authorize` isteği hücresel veri üzerinden gitmeli. Kod yazıldı ama gerçek
-  bir Android cihazda (iki SIM/Wi-Fi karışık ortamda) hiç test edilmedi —
-  final öncesi mutlaka denenmeli.
-- **ffmpeg ile HLS→MP4 kaydı** (`video_recording_service.dart`): gerçek
-  cihazda hiç çalıştırılmadı. `-c copy` remux kullanıyoruz (transcode yok);
-  eğer stream segment formatları uyumsuz çıkarsa `-c:v copy -c:a aac` gibi
-  bir fallback gerekebilir.
-- **Lifebox**: resmi API/SDK yok, şu an native share sheet ile Lifebox
-  uygulamasına gönderiliyor (`lifebox_service.dart`). Yarı-manuel bir adım.
+  `/authorize` isteği hücresel veri üzerinden gitmeli. Gerçek Turkcell +
+  gerçek SIM ile hiç denenmedi (erişim 7 Ağustos'ta) — final öncesi
+  mutlaka test edilmeli.
+- **Lifebox**: resmi API/SDK paylaşılmadı; native share sheet ile Lifebox
+  uygulamasına gönderiliyor (`lifebox_service.dart`), yarı-manuel adım.

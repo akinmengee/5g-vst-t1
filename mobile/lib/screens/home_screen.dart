@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../config/app_config.dart';
 import '../state/session_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/entrance.dart';
-import '../widgets/mock_mode_banner.dart';
 import '../widgets/qod_card.dart';
 import '../widgets/session_card.dart';
 import '../widgets/step_timeline.dart';
@@ -109,7 +107,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       ),
       body: Column(
         children: [
-          if (AppConfig.useMock) const MockModeBanner(),
           StepTimeline(currentStep: controller.currentStepIndex),
           Expanded(
             child: TabBarView(

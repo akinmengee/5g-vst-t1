@@ -1,6 +1,5 @@
 import 'package:dio/dio.dart';
 
-import '../config/app_config.dart';
 import 'api_client.dart';
 
 /// mobile-integration.md 2.1 — `POST /api/auth/login` cevabı.
@@ -34,22 +33,6 @@ class NvService {
   final Dio _dio = ApiClient.instance.dio;
 
   Future<NvLoginResult> login(String phoneNumber) async {
-    if (AppConfig.useMock) {
-      await Future.delayed(const Duration(milliseconds: 600));
-      ApiClient.instance.traceLog.record(
-        method: 'POST',
-        path: '/api/auth/login',
-        duration: const Duration(milliseconds: 180),
-        statusCode: 200,
-      );
-      // Mock'ta WebView adımı atlanır (authorizeUrl null) — durum polling'i
-      // yine çalışır ki gerçek akışla aynı kod yolu denensin.
-      return NvLoginResult(
-        flowId: 'mock-flow-${DateTime.now().millisecondsSinceEpoch % 100000}',
-        authorizeUrl: null,
-      );
-    }
-
     try {
       final response = await _dio.post(
         '/api/auth/login',
@@ -67,22 +50,7 @@ class NvService {
     }
   }
 
-  int _mockPollCount = 0;
-
   Future<NvStatusResult> fetchStatus(String flowId) async {
-    if (AppConfig.useMock) {
-      await Future.delayed(const Duration(milliseconds: 300));
-      _mockPollCount++;
-      final verified = _mockPollCount >= 2; // ~2 sn "pending" simülasyonu
-      ApiClient.instance.traceLog.record(
-        method: 'GET',
-        path: '/api/auth/status/$flowId',
-        duration: const Duration(milliseconds: 120),
-        statusCode: 200,
-      );
-      return NvStatusResult(status: verified ? 'verified' : 'pending');
-    }
-
     try {
       final response = await _dio.get('/api/auth/status/$flowId');
       return NvStatusResult(
@@ -102,6 +70,4 @@ class NvService {
       return const NvStatusResult(status: 'pending');
     }
   }
-
-  void resetMockState() => _mockPollCount = 0;
 }

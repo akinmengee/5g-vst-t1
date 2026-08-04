@@ -24,14 +24,11 @@ import 'package:teknofest_mobile/services/results_service.dart';
 /// cd ../mobile && flutter test test/backend_integration_test.dart
 /// ```
 ///
-/// NOT: `AppConfig.useMock` varsayılan olarak false — bu test bu yüzden ekstra
-/// bayrak GEREKTİRMEZ; `--dart-define=USE_MOCK=true` verilirse anlamsızlaşır
-/// (servisler sahteye döner), o durumda da kendini iptal eder.
 void main() {
   late bool backendAyakta;
 
   setUpAll(() async {
-    backendAyakta = !AppConfig.useMock && await _saglikKontrolu();
+    backendAyakta = await _saglikKontrolu();
   });
 
   test('NV: login -> WebView yonlendirmesi -> verified', () async {
@@ -116,9 +113,8 @@ void main() {
     if (!backendAyakta) {
       // ignore: avoid_print
       print(
-        'ATLANDI: ${AppConfig.backendBaseUrl} adresinde backend bulunamadi '
-        '(ya da USE_MOCK=true). Entegrasyon testleri icin once backend '
-        'calistirilmali.',
+        'ATLANDI: ${AppConfig.backendBaseUrl} adresinde backend bulunamadi. '
+        'Entegrasyon testleri icin once backend calistirilmali.',
       );
     }
   });
