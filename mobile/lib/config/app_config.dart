@@ -29,7 +29,7 @@ class AppConfig {
   /// Backend `USE_MOCK_5G=true` ile çalışırken buranın da true olması GEREKMEZ:
   /// o durumda gerçek HTTP akışının tamamı (WebView + callback + polling dahil)
   /// Turkcell olmadan çalışır. Burası yalnızca backend hiç yokken UI denemek
-  /// içindir.
+  /// içindir (telefon demo APK'sı ve web önizleme paketi bu bayrakla derlenir).
   static const bool useMock = bool.fromEnvironment('USE_MOCK');
 
   /// Open Gateway Demo UX Kılavuzu'ndaki sandbox test numarası.
@@ -44,9 +44,9 @@ class AppConfig {
   static const Duration maxRecordingDuration = Duration(minutes: 5);
 
   /// Sözleşme § 2.3 / § 2.6: NV durumu ~1 sn, AI sonucu 1-2 sn arayla pollenir.
-  static const Duration authPollInterval = Duration(seconds: 1);
+  static const Duration nvPollInterval = Duration(seconds: 1);
   static const Duration aiPollInterval = Duration(seconds: 2);
 
-  /// Sözleşme § 2.3: 60 sn'de sonuç gelmezse timeout göster.
-  static const Duration authPollTimeout = Duration(seconds: 60);
+  /// mobile-integration.md 2.3: 60 sn'de sonuç gelmezse timeout gösterilir.
+  static const Duration nvPollTimeout = Duration(seconds: 60);
 }

@@ -10,12 +10,18 @@ class MockModeBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      color: Colors.amber.shade700,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFFB8860B), Color(0xFFD69E12)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
+      child: const Row(
         children: [
-          const Icon(Icons.science_outlined, size: 15, color: Colors.white),
-          const SizedBox(width: 6),
+          Icon(Icons.science_outlined, size: 15, color: Colors.white),
+          SizedBox(width: 7),
           Expanded(
             child: Text(
               'MOCK MOD — NV/QoD/backend/AI sonuçları simülasyon. Sadece stream ve kayıt gerçek.',
@@ -23,6 +29,7 @@ class MockModeBanner extends StatelessWidget {
                 color: Colors.white,
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
               ),
               overflow: TextOverflow.ellipsis,
             ),

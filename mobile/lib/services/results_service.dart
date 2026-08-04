@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
 import '../config/app_config.dart';
@@ -16,15 +14,7 @@ class UploadResult {
   const UploadResult({required this.success, this.jobId, this.errorMessage});
 }
 
-class FetchResultResponse {
-  final AiResultStatus status;
-  final AiResult? result;
-  final String? resultsSha256;
-
-  const FetchResultResponse({required this.status, this.result, this.resultsSha256});
-}
-
-/// mobile-integration.md § 2.5, 2.6.
+/// mobile-integration.md → "2.5 /api/videos/upload" + "2.6 /api/videos/{job_id}/result".
 class ResultsService {
   final Dio _dio = ApiClient.instance.dio;
 
@@ -40,7 +30,12 @@ class ResultsService {
         duration: const Duration(milliseconds: 780),
         statusCode: 202,
       );
-      return const UploadResult(success: true, jobId: 'mock-job-1');
+      // Her upload ayrı bir iş: job başına ayrı polling sayacı ve sonuçta
+      // görünecek video adı tutulur (çoklu kayıt akışı gerçekle aynı olsun).
+      final jobId = 'mock-job-${++_mockJobSeq}';
+      _mockPolls[jobId] = 0;
+      _mockVideoNames[jobId] = filePath.split(RegExp(r'[/\\]')).last;
+      return UploadResult(success: true, jobId: jobId);
     }
 
     try {
@@ -58,28 +53,40 @@ class ResultsService {
       );
       return UploadResult(success: true, jobId: response.data['job_id'] as String?);
     } on DioException catch (e) {
-      return UploadResult(
-        success: false,
-        errorMessage: backendDetail(e) ?? e.message ?? 'Yükleme başarısız',
-      );
+      final message = e.response?.statusCode == 404
+          ? 'Oturum (flow) süresi dolmuş — NV\'den yeniden başlayın'
+          : (e.message ?? 'Yükleme başarısız');
+      return UploadResult(success: false, errorMessage: message);
     } on FileSystemException catch (e) {
       return UploadResult(success: false, errorMessage: e.message);
     }
   }
 
-  Future<FetchResultResponse> fetchResult(String jobId) async {
+  int _mockJobSeq = 0;
+  final Map<String, int> _mockPolls = {};
+  final Map<String, String> _mockVideoNames = {};
+
+  Future<({AiResultStatus status, AiResult? result})> fetchResult(String jobId) async {
     if (AppConfig.useMock) {
       await Future.delayed(const Duration(milliseconds: 500));
+      final count = (_mockPolls[jobId] ?? 0) + 1;
+      _mockPolls[jobId] = count;
+      // Sözleşme 4: PROCESSING -> DONE geçişi 2-3 sn gecikmeyle simüle edilir.
+      final done = count >= 2;
       ApiClient.instance.traceLog.record(
         method: 'GET',
         path: '/api/videos/$jobId/result',
         duration: const Duration(milliseconds: 480),
         statusCode: 200,
       );
-      return FetchResultResponse(
-        status: AiResultStatus.done,
-        result: AiResult.fromJson(_mockResultsJson),
-        resultsSha256: _sha256Of(_mockResultsJson),
+      return (
+        status: done ? AiResultStatus.done : AiResultStatus.processing,
+        result: done
+            ? AiResult.fromJson({
+                ..._mockResultsJson,
+                'video_id': _mockVideoNames[jobId] ?? 'video.mp4',
+              })
+            : null,
       );
     }
 
@@ -92,38 +99,36 @@ class ResultsService {
         _ => AiResultStatus.processing,
       };
       final resultsJson = response.data['results'] as Map<String, dynamic>?;
-      return FetchResultResponse(
+      return (
         status: status,
         result: resultsJson != null ? AiResult.fromJson(resultsJson) : null,
-        resultsSha256: resultsJson != null ? _sha256Of(resultsJson) : null,
       );
     } on DioException catch (e) {
-      // Sözleşme § 2.6: bilinmeyen/süresi dolmuş job_id → 404. Bunu
-      // "processing" saymak sonsuza dek pollemek demek olurdu; kullanıcıya
-      // hata gösterilip yeniden yükleme denenebilmeli. Diğer (geçici ağ)
-      // hatalarında polling devam eder.
+      // Bilinmeyen/süresi dolmuş job (404) "hâlâ işleniyor" DEĞİLDİR — öyle
+      // sayılırsa polling sonsuza dek döner. Geçici ağ hataları processing
+      // kalır ki polling denemeye devam etsin.
       if (e.response?.statusCode == 404) {
-        return const FetchResultResponse(status: AiResultStatus.failed);
+        return (status: AiResultStatus.failed, result: null);
       }
-      return const FetchResultResponse(status: AiResultStatus.processing);
+      return (status: AiResultStatus.processing, result: null);
     }
-  }
-
-  /// mobile-integration.md § 1 adım 8: "results JSON içeriğinin SHA256'sını
-  /// hesaplayıp ekranda göster" — resmi akış diyagramı adım 17. Bu hash'i
-  /// yalnızca mobil üretir (backend karşılık gelen bir hash hesaplamıyor),
-  /// dolayısıyla karşılaştırılacak bir referans yok: ayrıştırılmış Map'in
-  /// compact `jsonEncode` hali üzerinden hesaplanıyor.
-  String _sha256Of(Map<String, dynamic> results) {
-    return sha256.convert(utf8.encode(jsonEncode(results))).toString();
   }
 }
 
+/// faz2_gt.json'daki gerçek dağılıma benzer örnek: aynı etiket farklı
+/// zamanlarda TEKRAR eder (sözleşme 2.6: "normaldir").
 const _mockResultsJson = {
   'video_id': 'video.mp4',
-  'arac_bilgisi': {'tip': 'sedan', 'plaka': '34ABC123', 'renk': 'beyaz', 'confidence_score': 0.94},
+  'arac_bilgisi': {'tip': 'suv', 'plaka': '34TC8532', 'renk': 'siyah', 'confidence_score': 0.94},
   'tespitler': [
-    {'zaman_saniye': 14.5, 'kategori': 'sofor_eylemi', 'etiket': 'telefonla_konusma', 'confidence_score': 0.89},
-    {'zaman_saniye': 22.0, 'kategori': 'sofor_eylemi', 'etiket': 'emniyet_kemeri_ihlali', 'confidence_score': 0.91},
+    {'zaman_saniye': 0.9, 'kategori': 'sofor_eylemi', 'etiket': 'esneme', 'confidence_score': 0.71},
+    {'zaman_saniye': 4.3, 'kategori': 'nesneler', 'etiket': 'teknocan', 'confidence_score': 0.83},
+    {'zaman_saniye': 6.0, 'kategori': 'yolcular', 'etiket': 'arka_koltuk_2', 'confidence_score': 0.66},
+    {'zaman_saniye': 11.1, 'kategori': 'sofor_eylemi', 'etiket': 'telefonla_konusma', 'confidence_score': 0.78},
+    {'zaman_saniye': 16.0, 'kategori': 'yolcular', 'etiket': 'arka_koltuk_2', 'confidence_score': 0.69},
+    {'zaman_saniye': 25.3, 'kategori': 'sofor_eylemi', 'etiket': 'emniyet_kemeri_ihlali', 'confidence_score': 0.55},
+    {'zaman_saniye': 28.9, 'kategori': 'sofor_eylemi', 'etiket': 'su_icme', 'confidence_score': 0.62},
+    {'zaman_saniye': 38.1, 'kategori': 'sofor_eylemi', 'etiket': 'sigara_icme', 'confidence_score': 0.64},
+    {'zaman_saniye': 45.9, 'kategori': 'sofor_eylemi', 'etiket': 'sigara_icme', 'confidence_score': 0.58},
   ],
 };

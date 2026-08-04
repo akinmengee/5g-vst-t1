@@ -1,0 +1,35 @@
+{
+    "name": "VST-T1 — TEKNOFEST 5G",
+    "short_name": "VST-T1",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0A1F44",
+    "theme_color": "#0A1F44",
+    "description": "TEKNOFEST 2026 5G Yol Güvenliği — VST T1 mobil uygulaması",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

@@ -7,7 +7,9 @@ import '../theme/app_theme.dart';
 import 'accent_card.dart';
 
 /// Open Gateway Demo UX Kılavuzu → "03 Quality-on-Demand'i aç" / HOME SEKMESİ
-/// · "QOD SESSİON" KARTI. Profil sabit: teknofest2026.
+/// · "QOD SESSİON" KARTI. mobile-integration.md 2.4: parametre gönderilmez,
+/// profil/süre backend'de sabittir (teknofest2026); `success:false` akışı
+/// kilitlemez, puan kaybı yoktur.
 class QodCard extends StatelessWidget {
   final QodSession session;
   final bool loading;
@@ -26,11 +28,10 @@ class QodCard extends StatelessWidget {
     this.bandwidthMeasuring = false,
   });
 
-  Color get _accentColor => switch (session.status) {
-        QodStatus.idle => Colors.grey.shade300,
-        QodStatus.requested => Colors.orange,
-        QodStatus.available => Colors.green,
-        QodStatus.unavailable => Colors.red,
+  Color get _accentColor => switch (session.outcome) {
+        QodOutcome.idle => Colors.grey.shade300,
+        QodOutcome.success => AppTheme.success,
+        QodOutcome.failed => AppTheme.warning,
       };
 
   @override
@@ -47,27 +48,73 @@ class QodCard extends StatelessWidget {
                 children: const [
                   StepBadge('03'),
                   SizedBox(width: 8),
-                  Text('QoD Session', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text('QoD Session',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 ],
               ),
-              _statusChip(session.status),
+              _statusChip(),
             ],
           ),
-          const SizedBox(height: 4),
-          const Text('profil: teknofest2026', style: TextStyle(color: Colors.grey, fontSize: 12)),
-          if (session.sessionId != null) ...[
-            const SizedBox(height: 4),
-            Text('session: ${session.sessionId}', style: const TextStyle(fontSize: 12)),
-          ],
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: loading || session.status != QodStatus.idle ? null : onStart,
-            icon: loading
-                ? const SizedBox(
-                    width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.speed),
-            label: Text(session.status == QodStatus.idle ? 'QoD Aç' : 'QoD tetiklendi'),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Icon(Icons.tune, size: 13, color: AppTheme.inkSoft),
+              const SizedBox(width: 5),
+              const Text('profil: ', style: TextStyle(color: AppTheme.inkSoft, fontSize: 12)),
+              const Text(
+                'teknofest2026',
+                style: TextStyle(
+                  color: AppTheme.ink,
+                  fontSize: 12,
+                  fontFamily: AppTheme.monoFamily,
+                ),
+              ),
+              if (session.sessionId != null) ...[
+                const SizedBox(width: 12),
+                const Icon(Icons.link, size: 13, color: AppTheme.inkSoft),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    session.sessionId!,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: AppTheme.monoFamily,
+                      color: AppTheme.ink,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              // Başarısızsa yeniden denenebilir (sözleşme: akış kilitlenmez).
+              onPressed:
+                  loading || session.outcome == QodOutcome.success ? null : onStart,
+              icon: loading
+                  ? const SizedBox(
+                      width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Icon(session.outcome == QodOutcome.success ? Icons.check : Icons.speed,
+                      size: 19),
+              label: Text(switch (session.outcome) {
+                QodOutcome.idle => 'QoD Aç',
+                QodOutcome.success =>
+                  session.alreadyActive ? 'QoD zaten aktifti' : 'QoD tetiklendi',
+                QodOutcome.failed => 'QoD başarısız — tekrar dene',
+              }),
+            ),
+          ),
+          if (session.outcome == QodOutcome.failed) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'QoD açılamadı — akış düşük kalitede devam ediyor (puan kaybı yok, '
+              'sadece +5 kaçtı).',
+              style: TextStyle(fontSize: 12, color: AppTheme.inkSoft),
+            ),
+          ],
           if (bandwidthMeasuring || bandwidthBefore != null) ...[
             const SizedBox(height: 16),
             const Divider(height: 1),
@@ -83,18 +130,28 @@ class QodCard extends StatelessWidget {
     );
   }
 
-  Widget _statusChip(QodStatus status) {
-    final (color, label) = switch (status) {
-      QodStatus.idle => (Colors.grey, 'IDLE'),
-      QodStatus.requested => (Colors.orange, 'REQUESTED'),
-      QodStatus.available => (Colors.green, 'AVAILABLE'),
-      QodStatus.unavailable => (Colors.red, 'UNAVAILABLE'),
+  Widget _statusChip() {
+    final (color, label) = switch (session.outcome) {
+      QodOutcome.idle => (AppTheme.inkSoft, 'IDLE'),
+      QodOutcome.success => (AppTheme.success, session.qosStatus ?? 'REQUESTED'),
+      QodOutcome.failed => (AppTheme.warning, 'DEVAM'),
     };
-    return Chip(
-      label: Text(label, style: const TextStyle(fontSize: 11, color: Colors.white)),
-      backgroundColor: color,
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 11,
+          letterSpacing: 0.4,
+        ),
+      ),
     );
   }
 }
@@ -116,20 +173,49 @@ class _BandwidthImpact extends StatelessWidget {
         children: [
           SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
           SizedBox(width: 8),
-          Text('İndirme hızı ölçülüyor…', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          Text('İndirme hızı ölçülüyor…',
+              style: TextStyle(fontSize: 12, color: AppTheme.inkSoft)),
         ],
       );
     }
     if (before == null) return const SizedBox.shrink();
 
     final maxMbps = [before!.mbps, after?.mbps ?? 0].reduce((a, b) => a > b ? a : b);
+    final deltaPct = (after != null && before!.mbps > 0)
+        ? ((after!.mbps - before!.mbps) / before!.mbps * 100)
+        : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Gerçek indirme hızı ölçümü', style: TextStyle(fontSize: 12, color: Colors.grey)),
+        Row(
+          children: [
+            const Expanded(
+              child: Text('Gerçek indirme hızı ölçümü',
+                  style: TextStyle(fontSize: 12, color: AppTheme.inkSoft)),
+            ),
+            if (deltaPct != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: (deltaPct >= 0 ? AppTheme.success : AppTheme.warning)
+                      .withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${deltaPct >= 0 ? '+' : ''}${deltaPct.toStringAsFixed(0)}%',
+                  style: TextStyle(
+                    color: deltaPct >= 0 ? AppTheme.success : AppTheme.warning,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11.5,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+          ],
+        ),
         const SizedBox(height: 8),
-        _bar('Önce', before!.mbps, maxMbps, AppTheme.navy.withValues(alpha: 0.25)),
+        _bar('Önce', before!.mbps, maxMbps, AppTheme.navy.withValues(alpha: 0.30)),
         const SizedBox(height: 6),
         if (after != null)
           _bar('Sonra', after!.mbps, maxMbps, AppTheme.turkcellYellow)
@@ -138,7 +224,7 @@ class _BandwidthImpact extends StatelessWidget {
             children: [
               SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
               SizedBox(width: 8),
-              Text('Sonra ölçülüyor…', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              Text('Sonra ölçülüyor…', style: TextStyle(fontSize: 12, color: AppTheme.inkSoft)),
             ],
           ),
         if (after != null && AppConfig.useMock) ...[
@@ -146,7 +232,8 @@ class _BandwidthImpact extends StatelessWidget {
           const Text(
             'Not: mock modda QoD çağrısı da simüle — bu fark ağ dalgalanmasından '
             'olabilir, gerçek backend bağlanınca bu ölçüm QoD\'nin kanıtı olur.',
-            style: TextStyle(fontSize: 10.5, color: Colors.grey, fontStyle: FontStyle.italic),
+            style: TextStyle(
+                fontSize: 10.5, color: AppTheme.inkSoft, fontStyle: FontStyle.italic),
           ),
         ],
       ],
@@ -154,30 +241,38 @@ class _BandwidthImpact extends StatelessWidget {
   }
 
   Widget _bar(String label, double mbps, double maxMbps, Color color) {
-    final fraction = maxMbps <= 0 ? 0.0 : (mbps / maxMbps).clamp(0.05, 1.0);
+    final fraction = maxMbps <= 0 ? 0.0 : (mbps / maxMbps).clamp(0.05, 1.0).toDouble();
     return Row(
       children: [
-        SizedBox(width: 40, child: Text(label, style: const TextStyle(fontSize: 12))),
+        SizedBox(
+            width: 40,
+            child: Text(label,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500))),
         Expanded(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: fraction,
-              minHeight: 10,
-              backgroundColor: Colors.black.withValues(alpha: 0.06),
-              valueColor: AlwaysStoppedAnimation(color),
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: fraction),
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, _) => LinearProgressIndicator(
+                value: value,
+                minHeight: 10,
+                backgroundColor: Colors.black.withValues(alpha: 0.06),
+                valueColor: AlwaysStoppedAnimation(color),
+              ),
             ),
           ),
         ),
         const SizedBox(width: 8),
         SizedBox(
-          width: 64,
+          width: 72,
           child: Text(
-            '${mbps.toStringAsFixed(1)} Mb',
+            '${mbps.toStringAsFixed(1)} Mbps',
             textAlign: TextAlign.right,
             style: const TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w700,
               fontFeatures: [FontFeature.tabularFigures()],
             ),
           ),

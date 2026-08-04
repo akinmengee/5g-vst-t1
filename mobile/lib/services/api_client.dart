@@ -54,18 +54,6 @@ extension on RequestOptions {
   }
 }
 
-/// Sözleşme § 3: tüm hata gövdeleri FastAPI standardıdır — `{"detail": "..."}`.
-///
-/// Validasyon hatalarında (§ 2.1'deki 422: bozuk telefon formatı) FastAPI
-/// `detail`'i bir STRING değil hata listesi olarak döndürür; doğrudan String'e
-/// cast etmek orada tip hatası fırlatır. Bu yüzden tek yerde ve tip-güvenli.
-String? backendDetail(DioException e) {
-  final data = e.response?.data;
-  if (data is! Map) return null;
-  final detail = data['detail'];
-  return detail is String ? detail : null;
-}
-
 class ApiClient {
   static final ApiClient instance = ApiClient._();
   late final Dio dio;

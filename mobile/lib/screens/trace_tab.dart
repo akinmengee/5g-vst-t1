@@ -35,11 +35,23 @@ class TraceTab extends StatelessWidget {
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text('Open Gateway İz Kaydı',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                 ),
-                Text(
-                  'toplam ${(traceLog.totalDuration.inMilliseconds / 1000).toStringAsFixed(1)}s',
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppTheme.navy.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'toplam ${(traceLog.totalDuration.inMilliseconds / 1000).toStringAsFixed(1)}s',
+                    style: const TextStyle(
+                      color: AppTheme.inkSoft,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -49,7 +61,10 @@ class TraceTab extends StatelessWidget {
               padding: EdgeInsets.zero,
               child: Column(
                 children: [
-                  for (final entry in traceLog.entries) _TraceRow(entry: entry),
+                  for (final (i, entry) in traceLog.entries.indexed) ...[
+                    if (i > 0) const Divider(height: 1),
+                    _TraceRow(entry: entry),
+                  ],
                 ],
               ),
             ),
@@ -64,29 +79,49 @@ class _TraceRow extends StatelessWidget {
   final TraceEntry entry;
   const _TraceRow({required this.entry});
 
+  Color get _methodColor => switch (entry.method) {
+        'POST' => AppTheme.catPassenger,
+        'GET' => AppTheme.catObject,
+        'PUT' || 'PATCH' => AppTheme.warning,
+        'DELETE' => AppTheme.danger,
+        _ => AppTheme.inkSoft,
+      };
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       child: Row(
         children: [
           _statusIcon(),
           const SizedBox(width: 10),
+          Container(
+            width: 44,
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            decoration: BoxDecoration(
+              color: _methodColor.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(5),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              entry.method,
+              style: TextStyle(
+                fontFamily: AppTheme.monoFamily,
+                fontWeight: FontWeight.w500,
+                fontSize: 10.5,
+                color: _methodColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           Expanded(
-            child: RichText(
+            child: Text(
+              entry.path,
               overflow: TextOverflow.ellipsis,
-              text: TextSpan(
-                style: DefaultTextStyle.of(context).style,
-                children: [
-                  TextSpan(
-                    text: '${entry.method} ',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontFamily: 'monospace'),
-                  ),
-                  TextSpan(
-                    text: entry.path,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                  ),
-                ],
+              style: const TextStyle(
+                fontFamily: AppTheme.monoFamily,
+                fontSize: 12,
+                color: AppTheme.ink,
               ),
             ),
           ),
@@ -94,9 +129,9 @@ class _TraceRow extends StatelessWidget {
             Text(
               '${entry.duration!.inMilliseconds} ms',
               style: const TextStyle(
-                color: Colors.grey,
-                fontSize: 12,
-                fontFeatures: [FontFeature.tabularFigures()],
+                color: AppTheme.inkSoft,
+                fontSize: 11.5,
+                fontFamily: AppTheme.monoFamily,
               ),
             ),
           const SizedBox(width: 8),
@@ -109,31 +144,31 @@ class _TraceRow extends StatelessWidget {
   Widget _statusIcon() {
     switch (entry.status) {
       case TraceStatus.success:
-        return const Icon(Icons.check_circle, color: Colors.green, size: 18);
+        return const Icon(Icons.check_circle, color: AppTheme.success, size: 17);
       case TraceStatus.error:
-        return const Icon(Icons.cancel, color: Colors.red, size: 18);
+        return const Icon(Icons.cancel, color: AppTheme.danger, size: 17);
       case TraceStatus.pending:
         return const SizedBox(
-          width: 16,
-          height: 16,
+          width: 15,
+          height: 15,
           child: CircularProgressIndicator(strokeWidth: 2),
         );
     }
   }
 
   Widget _statusChip(int code, TraceStatus status) {
-    final color = status == TraceStatus.error ? Colors.red : Colors.green;
+    final color = status == TraceStatus.error ? AppTheme.danger : AppTheme.success;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
         '$code',
         style: TextStyle(
           color: color,
-          fontWeight: FontWeight.bold,
+          fontWeight: FontWeight.w700,
           fontSize: 11,
           fontFeatures: const [FontFeature.tabularFigures()],
         ),

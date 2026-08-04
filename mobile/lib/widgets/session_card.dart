@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/nv_session.dart';
 import '../theme/app_theme.dart';
@@ -14,39 +15,101 @@ class SessionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AccentCard(
-      accentColor: session.isVerified ? Colors.green : Colors.grey.shade300,
+      accentColor: session.isVerified ? AppTheme.success : Colors.grey.shade300,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               const StepBadge('02'),
-              const SizedBox(width: 8),
-              const Icon(Icons.verified, color: Colors.green, size: 20),
-              const SizedBox(width: 6),
-              const Text('Verified', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      session.phoneNumber,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Şebeke üzerinden doğrulandı — SMS kodu kullanılmadı',
+                      style: TextStyle(color: AppTheme.inkSoft, fontSize: 11.5),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppTheme.success.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.verified, color: AppTheme.success, size: 14),
+                    SizedBox(width: 4),
+                    Text(
+                      'Verified',
+                      style: TextStyle(
+                        color: AppTheme.success,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 12),
-          _row('Phone number', session.phoneNumber),
-          _row('Flow ID', session.flowId ?? '-'),
-        ],
-      ),
-    );
-  }
-
-  Widget _row(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(color: Colors.grey)),
-          Flexible(
-            child: Text(
-              value,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.right,
+          const SizedBox(height: 14),
+          // mobile-integration.md 3: flow_id tek ipliktir — sonraki tüm
+          // adımlar (status/qod/upload) bu id ile bağlanır.
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: session.flowId == null
+                ? null
+                : () {
+                    Clipboard.setData(ClipboardData(text: session.flowId!));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Flow ID panoya kopyalandı')),
+                    );
+                  },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.background,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Text('flow_id',
+                      style: TextStyle(color: AppTheme.inkSoft, fontSize: 11.5)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      session.flowId ?? '—',
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        fontFamily: AppTheme.monoFamily,
+                        fontSize: 11.5,
+                        color: AppTheme.ink,
+                      ),
+                    ),
+                  ),
+                  if (session.flowId != null) ...[
+                    const SizedBox(width: 6),
+                    const Icon(Icons.copy, size: 13, color: AppTheme.inkSoft),
+                  ],
+                ],
+              ),
             ),
           ),
         ],

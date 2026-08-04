@@ -1,10 +1,22 @@
-/// Backend sözleşmesi: `POST /api/qod/start` hiçbir parametre almaz (süre/IP/
-/// profil backend'de sabit) — `flow_id` dışında gönderilecek bir şey yok.
-enum QodStatus { idle, requested, available, unavailable }
+/// mobile-integration.md 2.4: `/api/qod/start` her durumda 200 döner;
+/// başarı `success` alanından okunur, Turkcell durumları `qosStatus`tan gelir.
+enum QodOutcome { idle, success, failed }
 
 class QodSession {
-  final QodStatus status;
-  final String? sessionId;
+  final QodOutcome outcome;
 
-  const QodSession({this.status = QodStatus.idle, this.sessionId});
+  /// true: sunucuda zaten aktif bir QoD oturumu vardı — başarı sayılır.
+  final bool alreadyActive;
+
+  final String? sessionId;
+  final String? qosStatus; // "REQUESTED" | null
+
+  const QodSession({
+    this.outcome = QodOutcome.idle,
+    this.alreadyActive = false,
+    this.sessionId,
+    this.qosStatus,
+  });
+
+  bool get succeeded => outcome == QodOutcome.success;
 }

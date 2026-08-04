@@ -23,45 +23,49 @@ import 'package:teknofest_mobile/services/results_service.dart';
 /// JOB_STORAGE_PATH=./.local-jobs USE_MOCK_5G=true python -m uvicorn app.main:app --port 8000
 /// cd ../mobile && flutter test test/backend_integration_test.dart
 /// ```
+///
+/// NOT: `AppConfig.useMock` varsayılan olarak false — bu test bu yüzden ekstra
+/// bayrak GEREKTİRMEZ; `--dart-define=USE_MOCK=true` verilirse anlamsızlaşır
+/// (servisler sahteye döner), o durumda da kendini iptal eder.
 void main() {
   late bool backendAyakta;
 
   setUpAll(() async {
-    backendAyakta = await _saglikKontrolu();
+    backendAyakta = !AppConfig.useMock && await _saglikKontrolu();
   });
 
   test('NV: login -> WebView yonlendirmesi -> verified', () async {
     if (!backendAyakta) return;
     final nv = NvService();
 
-    final login = await nv.startLogin(AppConfig.sandboxTestPhoneNumber);
+    final login = await nv.login(AppConfig.sandboxTestPhoneNumber);
     expect(login.success, isTrue, reason: login.errorMessage);
     expect(login.flowId, isNotNull);
     expect(login.authorizeUrl, isNotNull);
 
     // WebView açılmadan önce sonuç beklenmemeli.
-    final ilkDurum = await nv.checkStatus(login.flowId!);
-    expect(ilkDurum.status, AuthPollStatus.pending);
+    final ilkDurum = await nv.fetchStatus(login.flowId!);
+    expect(ilkDurum.status, 'pending');
 
     // WebView'in yaptığının aynısı: authorize_url'i aç, yönlendirmeleri takip et.
     await _webViewGibiAc(login.authorizeUrl!);
 
-    final sonDurum = await nv.checkStatus(login.flowId!);
-    expect(sonDurum.status, AuthPollStatus.verified);
+    final sonDurum = await nv.fetchStatus(login.flowId!);
+    expect(sonDurum.status, 'verified');
   });
 
-  test('NV: bilinmeyen flow_id 404 -> notFound', () async {
+  test('NV: bilinmeyen flow_id 404 -> error (yeniden giris istenir)', () async {
     if (!backendAyakta) return;
-    final durum = await NvService().checkStatus('boyle-bir-flow-yok');
-    expect(durum.status, AuthPollStatus.notFound);
+    final durum = await NvService().fetchStatus('boyle-bir-flow-yok');
+    expect(durum.status, 'error');
+    expect(durum.message, isNotNull);
   });
 
   test('NV: bozuk telefon formati (422) cokme yerine hata mesaji verir', () async {
     if (!backendAyakta) return;
-    // Sözleşme § 2.1: E.164 dışı numara 422 döner. FastAPI 422'de `detail`i
-    // String değil LİSTE olarak döndürür — String'e cast etmek burada
-    // patlardı, bu testin asıl konusu o.
-    final login = await NvService().startLogin('05551234567');
+    // Sözleşme § 2.1: E.164 dışı numara 422 döner (FastAPI `detail`i liste
+    // olarak döndürür — String cast'i burada patlardı).
+    final login = await NvService().login('05551234567');
     expect(login.success, isFalse);
     expect(login.errorMessage, isNotNull);
   });
@@ -70,8 +74,8 @@ void main() {
     if (!backendAyakta) return;
     final flowId = await _dogrulanmisFlow();
 
-    final oturum = await QodService().startSession(flowId: flowId);
-    expect(oturum.status, QodStatus.requested);
+    final oturum = await QodService().start(flowId);
+    expect(oturum.outcome, QodOutcome.success);
     expect(oturum.sessionId, isNotNull);
   });
 
@@ -89,7 +93,7 @@ void main() {
     expect(yukleme.jobId, isNotNull);
 
     // SessionController'ın periyodik polling'inin yaptığı iş.
-    FetchResultResponse? sonuc;
+    ({AiResultStatus status, AiResult? result})? sonuc;
     for (var i = 0; i < 20; i++) {
       sonuc = await results.fetchResult(yukleme.jobId!);
       if (sonuc.status != AiResultStatus.processing) break;
@@ -99,7 +103,7 @@ void main() {
     expect(sonuc!.status, AiResultStatus.done);
     expect(sonuc.result, isA<AiResult>());
     expect(sonuc.result!.detections, isNotEmpty);
-    expect(sonuc.resultsSha256, hasLength(64));
+    expect(sonuc.result!.raw, isNotEmpty);
   });
 
   test('Video: bilinmeyen job_id sonsuz polling yerine FAILED verir', () async {
@@ -112,8 +116,9 @@ void main() {
     if (!backendAyakta) {
       // ignore: avoid_print
       print(
-        'ATLANDI: ${AppConfig.backendBaseUrl} adresinde backend bulunamadi. '
-        'Entegrasyon testleri icin once backend calistirilmali.',
+        'ATLANDI: ${AppConfig.backendBaseUrl} adresinde backend bulunamadi '
+        '(ya da USE_MOCK=true). Entegrasyon testleri icin once backend '
+        'calistirilmali.',
       );
     }
   });
@@ -141,7 +146,7 @@ Future<void> _webViewGibiAc(String authorizeUrl) async {
 
 Future<String> _dogrulanmisFlow() async {
   final nv = NvService();
-  final login = await nv.startLogin(AppConfig.sandboxTestPhoneNumber);
+  final login = await nv.login(AppConfig.sandboxTestPhoneNumber);
   await _webViewGibiAc(login.authorizeUrl!);
   return login.flowId!;
 }
