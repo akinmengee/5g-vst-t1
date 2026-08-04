@@ -1,0 +1,215 @@
+{
+  "video_id": "video.mp4",
+  "arac_bilgisi": {
+    "tip": "suv",
+    "plaka": "34TC8532",
+    "renk": "siyah",
+    "confidence_score": 1.0
+  },
+  "tespitler": [
+    {
+      "zaman_saniye": 0.89,
+      "kategori": "sofor_eylemi",
+      "etiket": "esneme",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 4.29,
+      "kategori": "nesneler",
+      "etiket": "teknocan",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 6.04,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 11.13,
+      "kategori": "sofor_eylemi",
+      "etiket": "telefonla_konusma",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 15.95,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 25.04,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 25.34,
+      "kategori": "sofor_eylemi",
+      "etiket": "emniyet_kemeri_ihlali",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 28.91,
+      "kategori": "sofor_eylemi",
+      "etiket": "su_icme",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 34.31,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 38.06,
+      "kategori": "sofor_eylemi",
+      "etiket": "sigara_icme",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 39.01,
+      "kategori": "nesneler",
+      "etiket": "teknocan",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 42.89,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 45.87,
+      "kategori": "sofor_eylemi",
+      "etiket": "sigara_icme",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 51.37,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 55.02,
+      "kategori": "sofor_eylemi",
+      "etiket": "arkaya_bakma",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 59.98,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 63.16,
+      "kategori": "sofor_eylemi",
+      "etiket": "su_icme",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 67.54,
+      "kategori": "sofor_eylemi",
+      "etiket": "emniyet_kemeri_ihlali",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 68.87,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 71.67,
+      "kategori": "sofor_eylemi",
+      "etiket": "telefonla_konusma",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 75.86,
+      "kategori": "sofor_eylemi",
+      "etiket": "emniyet_kemeri_ihlali",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 77,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 82.87,
+      "kategori": "nesneler",
+      "etiket": "teknocan",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 84.83,
+      "kategori": "nesneler",
+      "etiket": "bilgisayar",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 86.69,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_1",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 92.58,
+      "kategori": "sofor_eylemi",
+      "etiket": "etrafa_bakinma",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 92.58,
+      "kategori": "sofor_eylemi",
+      "etiket": "sigara_icme",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 95.17,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 98.56,
+      "kategori": "yolcular",
+      "etiket": "on_koltuk",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 99.75,
+      "kategori": "sofor_eylemi",
+      "etiket": "emniyet_kemeri_ihlali",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 103.64,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 109.03,
+      "kategori": "sofor_eylemi",
+      "etiket": "slalom",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 110.48,
+      "kategori": "nesneler",
+      "etiket": "teknocan",
+      "confidence_score": 1.0
+    },
+    {
+      "zaman_saniye": 111.5,
+      "kategori": "yolcular",
+      "etiket": "arka_koltuk_2",
+      "confidence_score": 1.0
+    }
+  ]
+}
