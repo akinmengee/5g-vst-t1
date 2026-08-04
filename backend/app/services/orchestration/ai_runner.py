@@ -5,30 +5,20 @@ imaj `/app/data/input/video.mp4` okur, `/app/data/output/results.json` yazar,
 kendi kendine sonlanır. Backend bu imajı host process olarak `docker run` ile
 tetikler (S2/G3 kararı — Docker-in-Docker gerekmez).
 
-Mock/docker seçimi AI_RUNNER_MODE ile yapılır — USE_MOCK_5G ile aynı ilke:
-bilinçli deploy-zamanı konfigürasyonu, sessiz fallback yok.
+Sahte (mock) bir çalıştırıcı YOKTUR: AI çıktısı puanlanan şeyin ta kendisi,
+sabit bir fixture döndürmek gerçek davranışı gizler. Tek yol gerçek imajdır.
 """
 
 import asyncio
 import logging
 import shutil
 from pathlib import Path
-from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
 
 class AiRunnerError(Exception):
     """AI çalıştırma başarısız (timeout, non-zero exit, results.json üretilmedi)."""
-
-
-class AiRunner(Protocol):
-    async def run(self, job_id: str, input_video_path: Path, output_dir: Path) -> None:
-        """Videoyu işler; başarıda output_dir/results.json oluşmuş olur.
-
-        Başarısızlıkta AiRunnerError fırlatır — sessiz kısmi başarı yoktur.
-        """
-        ...
 
 
 class DockerAiRunner:
@@ -68,20 +58,3 @@ class DockerAiRunner:
             raise AiRunnerError(
                 f"docker run 0 ile bitti ama results.json üretmedi (job={job_id})"
             )
-
-
-class MockAiRunner:
-    """AI imajı hazır olmadan backend'i uçtan uca test etmek için.
-
-    Kısa bir gecikme sonrası şema-geçerli bir fixture results.json'ı
-    output_dir'e kopyalar.
-    """
-
-    def __init__(self, fixture_path: Path, delay_seconds: float = 2.0) -> None:
-        self._fixture_path = fixture_path
-        self._delay_seconds = delay_seconds
-
-    async def run(self, job_id: str, input_video_path: Path, output_dir: Path) -> None:
-        await asyncio.sleep(self._delay_seconds)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(self._fixture_path, output_dir / "results.json")

@@ -1,9 +1,11 @@
 # 5G VST T1 — Akıllı Yol Güvenliği
 
-**5G & Yapay Zekâ ile Akıllı Yol Güvenliği Yarışması** (Teknofest) kapsamında VST T1
-takımının geliştirdiği sistem. Yol kenarı/mobil kamera görüntüsünden araç bilgisi
-(plaka, renk, kasa tipi) ve sürücü/yolcu ihlallerini (telefon kullanımı, emniyet
-kemeri, slalom, esneme, vb.) gerçek zamanlı tespit eder.
+**5G & Yapay Zekâ ile Akıllı Yol Güvenliği Yarışması** (Teknofest) kapsamında
+VST T1 takımının final için geliştirdiği sistem. Mobil uygulama üzerinden
+Number Verification → Quality on Demand → video yükleme akışını yürütür;
+video, ayrı bir Docker imajındaki AI pipeline'ında işlenip araç bilgisi
+(plaka, renk, kasa tipi) ve sürücü/yolcu ihlalleri (telefon kullanımı,
+emniyet kemeri, slalom, esneme, vb.) tespit edilir.
 
 > **Takvim:** Final Yarışma Etabı **7-9 Ağustos 2026**, yüz yüze.
 
@@ -13,222 +15,128 @@ kemeri, slalom, esneme, vb.) gerçek zamanlı tespit eder.
 2. [Mimari](#mimari)
 3. [Proje Yapısı](#proje-yapısı)
 4. [Başlarken](#başlarken)
-5. [Mock Veriyle Uçtan Uca Test](#mock-veriyle-uçtan-uca-test)
-6. [Ortam Değişkenleri](#ortam-değişkenleri)
-7. [Model Ağırlıkları](#model-ağırlıkları)
-8. [Geliştirme Durumu ve Yol Haritası](#geliştirme-durumu-ve-yol-haritası)
-9. [Takım](#takım)
-10. [Daha Fazla Bilgi](#daha-fazla-bilgi)
+5. [Durum ve Yol Haritası](#durum-ve-yol-haritası)
+6. [Takım](#takım)
+7. [Daha Fazla Bilgi](#daha-fazla-bilgi)
 
 ## Proje Hakkında
 
-Takım daha önce iki aşamayı tamamladı:
+Sistem üç bağımsız parçadan oluşuyor:
 
-- **ÖTR (Ön Tasarım Raporu):** Mobil + 5G (Turkcell Open Gateway) + bulut tabanlı bir
-  edge-to-cloud mimari önerildi (100 üzerinden 92 aldı, mimari özellikle övüldü).
-- **FTR (Final Tasarım Raporu):** Yarışmanın otomatik değerlendirme ortamı (izole
-  Docker, tek video dosyası, internet yok) gereği, ÖTR'nin mobil/5G kısmı olmadan,
-  tek parça bir video-işleme yapay zekâ pipeline'ı teslim edildi (200 üzerinden 109 —
-  raporu 90/100 ama kod tarafı 19/100). Bu pipeline'ın AI/CV kısmı test edilip
-  kanıtlandı; `backend/app/services/vehicle_ai/_ftr_reference/` altında referans
-  olarak duruyor.
+- **`mobile/`** — Flutter uygulaması. Number Verification, Quality on
+  Demand, video kaydı/yükleme ve AI sonucunun gösterimi. Hiçbir AI/model
+  işi yapmaz, yalnızca orkestrasyon ve arayüz.
+- **`backend/`** — FastAPI. Mobil ile Turkcell Open Gateway arasında
+  aracılık eder, video yüklenince AI imajını tetikler, sonucu mobile
+  döner. Kendi torch/opencv bağımlılığı yoktur — ince bir katmandır.
+- **`ai/`** — Hakemin de bağımsız olarak çalıştıracağı Docker imajı
+  (`teknofest-2026/vst-t1`). Videoyu okur, `results.json` yazar, sonlanır.
 
-**Şu an yaptığımız iş:** ÖTR'nin mimari vizyonunu (mobil edge tespiti + 5G + bulut) ile
-FTR'de kanıtlanmış, çalışan AI pipeline'ını birleştirip, **7-9 Ağustos'taki yüz yüze
-finalde gerçekten çalışan, canlı bir sistem** haline getirmek. Bu deponun (repo)
-kapsamı budur.
+Bu üçlü ayrışma **3 Ağustos 2026'da organizasyondan gelen 9 resmi
+dokümanın** (Final Yarışma Senaryosu, FTR teslim dokümanı, Turkcell Open
+Gateway spesifikasyonları, Operasyon Rehberi vb.) tarif ettiği resmi final
+akışına birebir dayanıyor. Projenin daha önceki bir sürümü farklı bir
+mimari (mobilde edge AI + WebSocket) izliyordu; bu mimari organizasyonun
+resmi akışıyla çeliştiği için tamamen terk edildi — bugün kodda veya
+dokümanlarda bundan hiçbir iz yok.
 
-Bu kararların *neden* böyle alındığına dair tüm gerekçe, tartışılan alternatifler ve
-risk analizi için bkz. **[`PLAN.md`](./PLAN.md)** — bu README sadece "ne var, nasıl
-çalıştırılır" sorularına cevap verir; "neden böyle" sorusu için PLAN.md'ye bakın.
+Kararların *neden* böyle alındığına, tamamlanan işlere ve yol haritasına
+dair detay için bkz. **[`PLAN.md`](./PLAN.md)**.
 
 ## Mimari
 
 ```mermaid
 flowchart LR
-    subgraph Mobil["📱 Mobil (Flutter)"]
-        CAM["Kamera akışı"] --> EDGE["yolov8n ile\nedge araç tespiti"]
-        EDGE -- "araç yok" --> NONE["Hiçbir şey gönderilmez"]
-        EDGE -- "araç var" --> CROP["Kırpma + bbox metadata"]
+    subgraph M["📱 Mobil (Flutter)"]
+        NV["Number Verification"] --> QOD["Quality on Demand"]
+        QOD --> REC["Turkcell stream'ini\nMP4'e kaydet"]
     end
 
-    CROP -- "WebSocket\n(ROI görüntüsü + bbox + zaman damgası)" --> WS
+    REC -- "video upload" --> B
 
-    subgraph Backend["🖥️ Backend (FastAPI)"]
-        WS["/ws/stream"] --> QOD["OpenGatewayClient\n(mock ↔ gerçek Turkcell QoD)"]
-        WS --> AI["VehicleAnalysisService\n(kasa/renk/plaka/sürücü eylemi modelleri)"]
-        AI --> RESULT["Tespit sonuçları (JSON)"]
+    subgraph B["🖥️ Backend (FastAPI)"]
+        UP["POST /api/videos/upload"] --> TRIG["docker run\nteknofest-2026/vst-t1"]
     end
 
-    RESULT -- "WebSocket cevabı" --> UI["📊 Mobil: canlı overlay / uyarı / dashboard"]
+    TRIG --> AI
+
+    subgraph AI["🤖 AI Docker İmajı (ai/)"]
+        IN["/app/data/input/video.mp4"] --> PIPE["predict.py"]
+        PIPE --> OUT["/app/data/output/results.json"]
+    end
+
+    OUT -- "polling" --> B
+    B -- "sonuç JSON" --> M
+
+    JUDGE["👤 Hakemin Web UI'ı"] -. "aynı imajı\nbağımsız çalıştırır" .-> AI
 ```
 
-**Neden böyle?** Mobil, her karede hafif bir modelle (`yolov8n.pt`, elde zaten var)
-"araç var mı" diye bakar. Araç yoksa ağda hiçbir şey akmaz (event-driven). Araç
-görülünce, sadece o bölge kırpılıp gönderilir ve aynı anda 5G QoD (Quality on Demand)
-tetiklenir — böylece hem gecikme/ağ yükü azalır hem de "5G'yi gerektiğinde kullanma"
-hikâyesi işlevsel olarak gerçek olur (backend'in kendisi tüm karede tarama yapsaydı,
-bunu tetiklemek için zaten sürekli tam görüntü akıtmak gerekirdi). Detaylı gerekçe:
-[`PLAN.md` → Mimari Kararlar madde 6](./PLAN.md#mimari-kararlar).
-
-Backend tarafında iki dış bağımlılık (5G API'leri ve AI modelleri) bilinçli olarak
-**arayüz (interface) arkasına** alındı, çünkü ikisi de yarışma günü/geç aşamada
-değişecek/gelecek:
-
-| Bağımlılık | Arayüz | Şu anki (mock/placeholder) | Gerçek (yarışma günü) |
-|---|---|---|---|
-| 5G Open Gateway (Number Verification, QoD) | `OpenGatewayClient` | `MockOpenGatewayClient` | `TurkcellOpenGatewayClient` |
-| AI modelleri (kasa/renk/plaka/sürücü eylemi/slalom) | `VehicleAnalysisService` | boş/placeholder | `CurrentModelService` (Gün 4-7'de doldurulacak) |
-
-Hangisinin aktif olduğu tek bir ortam değişkeniyle (`USE_MOCK_5G`) seçilir — kod
-değişikliği gerekmez.
+Backend'deki tek dış bağımlılık (Turkcell Open Gateway) arayüz arkasında:
+mock ↔ gerçek arası `USE_MOCK_5G` ortam değişkeniyle seçilir, kod
+değişikliği gerekmez. AI çıktısı için sahte bir mod **yoktur** — video her
+zaman gerçek `ai/` imajına gider.
 
 ## Proje Yapısı
 
 ```text
 5g-vst-t1/
-├── PLAN.md                      # Tüm mimari kararlar, gerekçeler, risk analizi, gün gün plan
-├── README.md                    # Bu dosya
-├── backend/                     # FastAPI backend
-│   ├── app/
-│   │   ├── main.py                       # FastAPI giriş noktası
-│   │   ├── core/config.py                # Ortam değişkenleri (USE_MOCK_5G, MODEL_DIR, ...)
-│   │   ├── api/
-│   │   │   ├── routes_health.py          # GET /health
-│   │   │   └── routes_inference.py       # WS /ws/stream — mobilden ROI alır, tespit döner
-│   │   ├── schemas/
-│   │   │   ├── detection.py              # Yarışma çıktı şeması (FTR-docker-spec ile birebir)
-│   │   │   └── mobile_contract.py        # Mobil → backend veri sözleşmesi (ROI + bbox + metadata)
-│   │   ├── services/
-│   │   │   ├── vehicle_ai/
-│   │   │   │   ├── interface.py                # VehicleAnalysisService arayüzü
-│   │   │   │   ├── current_model_service.py    # Gerçek implementasyon (şu an placeholder)
-│   │   │   │   └── _ftr_reference/             # FTR'de teslim edilen orijinal kod (referans, DOKUNMA)
-│   │   │   └── network/
-│   │   │       ├── interface.py                # OpenGatewayClient arayüzü
-│   │   │       ├── mock_client.py              # Sahte 5G implementasyonu (şu an aktif)
-│   │   │       └── turkcell_client.py          # Gerçek Turkcell implementasyonu (yarışma günü doldurulacak)
-│   │   └── fixtures/mock_mobile_payloads/       # Mobil kodu olmadan test için sahte veri üretici + istemci
-│   ├── weights/                 # Model ağırlık dosyaları (.pt) — git'e eklenmez, bkz. aşağı
-│   ├── Dockerfile
-│   └── requirements.txt
-├── mobile/                      # Flutter uygulaması (sonraki fazda doldurulacak)
+├── PLAN.md, README.md
+├── ai/                     # Hakemin çalıştıracağı Docker imajı
+│   ├── main.py, Dockerfile, requirements.txt
+│   ├── src/predict.py, utils.py
+│   └── weights/            # Model ağırlıkları (git'e girmez)
+├── backend/                # FastAPI orkestrasyon katmanı
+│   └── app/api/, services/network/, services/orchestration/
+├── mobile/                 # Flutter uygulaması
+│   └── lib/
 └── docs/
-    └── integration-notes.md     # Geliştirme sırasında çıkan kütüphane/entegrasyon notları
+    ├── mobile-integration.md   # Backend ↔ mobil sözleşmesi
+    └── ai-integration.md       # Backend ↔ AI sözleşmesi
 ```
 
 ## Başlarken
 
-Gereksinimler: Python 3.10+, Git.
+Her parçanın kendi kurulum/çalıştırma talimatı kendi klasöründe:
 
-```bash
-git clone https://github.com/akinmengee/5g-vst-t1.git
-cd 5g-vst-t1/backend
+- **Backend:** [`backend/README.md`](./backend/README.md) — `uvicorn
+  app.main:app --reload`, ortam değişkenleri, test komutları.
+- **Mobil:** [`mobile/README.md`](./mobile/README.md) ve
+  [`mobile/CLAUDE.md`](./mobile/CLAUDE.md) — `flutter run
+  --dart-define=BACKEND_URL=...`, bilinen platform kısıtları (Windows
+  masaüstünde NV WebView test edilemez).
+- **AI:** [`docs/ai-integration.md`](./docs/ai-integration.md) —
+  `docker build -t teknofest-2026/vst-t1:latest ai/`, çalıştırma
+  sözleşmesi, resmi kısıt tablosu (8GB imaj, 10dk çalışma süresi).
 
-python -m venv .venv
-.venv\Scripts\activate            # Windows
-# source .venv/bin/activate       # macOS/Linux
-
-pip install -r requirements.txt
-```
-
-> **Not:** `requirements.txt` GPU'lu (CUDA) PyTorch indirir, ilk kurulum büyük ve
-> yavaş olabilir. Sadece backend iskeletini (henüz gerçek modeller olmadan) test
-> edecekseniz şu hafif küme yeterli: `pip install fastapi "uvicorn[standard]"
-> pydantic pydantic-settings python-multipart websockets opencv-python-headless numpy`
-
-Sunucuyu çalıştırın:
-
-```bash
-uvicorn app.main:app --reload --app-dir .
-```
-
-Kontrol edin:
-
-```bash
-curl http://localhost:8000/health
-# {"status": "ok"}
-```
-
-## Mock Veriyle Uçtan Uca Test
-
-Henüz mobil (Flutter) kodu yazılmadı — bu aşamada backend'i, mobilin göndereceği
-veriyi taklit eden sahte verilerle test ediyoruz.
-
-```bash
-# 1) Sunucu ayrı bir terminalde çalışıyor olmalı (yukarıdaki adım)
-
-# 2) Sahte mobil verisi üret (bir aracın yaklaşmasını simüle eden 8 kare)
-python -m app.fixtures.mock_mobile_payloads.generate_fixtures
-
-# 3) Bu veriyi WebSocket üzerinden backend'e gönder, cevapları gör
-python -m app.fixtures.mock_mobile_payloads.send_mock_stream
-```
-
-Her kare için backend'den gelen (şu an boş, çünkü gerçek modeller henüz bağlı değil)
-JSON cevabını terminalde görürsünüz. Bu, mobil ↔ backend ↔ WebSocket boru hattının
-uçtan uca çalıştığını kanıtlar.
-
-## Ortam Değişkenleri
-
-`.env` dosyasıyla veya doğrudan shell'den ayarlanabilir (bkz. `app/core/config.py`):
-
-| Değişken | Varsayılan | Açıklama |
-|---|---|---|
-| `USE_MOCK_5G` | `true` | `false` → gerçek `TurkcellOpenGatewayClient` kullanılır (yarışma günü). |
-| `MODEL_DIR` | `backend/weights` | Model ağırlıklarının bulunduğu klasör. |
-| `TURKCELL_API_BASE_URL` | *(boş)* | Gerçek 5G Open Gateway API adresi (yarışma günü verilecek). |
-| `TURKCELL_API_KEY` | *(boş)* | Gerçek 5G Open Gateway credential'ı (yarışma günü verilecek). |
-| `LOG_LEVEL` | `INFO` | Log seviyesi. |
-
-## Model Ağırlıkları
-
-Aşağıdaki dosyalar `backend/weights/` klasörüne konulmalı (büyük binary dosyalar
-oldukları için repoya eklenmiyor — `.gitignore`'a bakın, takım içi paylaşılmalı):
-
-```
-yolov8n.pt          yolov8s.pt           yolov8n-pose.pt      yolov8s-cls.pt
-kasa_modeli.pt       renk_modeli.pt       plaka_modeli.pt      karakter_modeli.pt
-kemer_v3.pt          sigara_v1.pt         su_v2.pt             telefon_temiz_v1.pt
-teknocan.pt          slalom_lstm.pt       face_landmarker.task
-```
-
-Bu modellerin doğrulukları henüz şüpheli/doğrulanmamış (yarışma veri seti
-paylaşılmadığı için) — güncellenmiş modeller geldiğinde sadece
-`current_model_service.py` değişecek, geri kalan kod etkilenmeyecek.
-
-## Geliştirme Durumu ve Yol Haritası
-
-- [x] **Gün 0-1 — İskelet:** FastAPI iskeleti, veri sözleşmeleri (şemalar), arayüzler
-  (`VehicleAnalysisService`, `OpenGatewayClient`) + mock implementasyonları, mock
-  mobil veri üreticisi. **Tamamlandı ve doğrulandı** (yukarıdaki mock test).
-- [x] **Gün 2-3 — Yürüyen iskelet:** Mock veri → WebSocket → backend → geçerli JSON
-  cevabı uçtan uca çalışıyor.
-- [x] **Gün 4-7 — Asıl mühendislik:** Batch/video-sonu mantığı gerçek zamanlı
-  (incremental) hale getirildi, 15 modelin tamamı bağlandı (GPU), bilinen hatalar
-  düzeltildi. **202 test geçiyor** — bunların çoğu, yeni streaming mantığının eski
-  batch mantığıyla *birebir aynı* sonucu ürettiğini kanıtlıyor.
-- [ ] **Gün 8-9 — Sağlamlaştırma:** Tespit eşiklerinin gerçek videoyla ayarlanması,
-  gerçek telefonda test, kuru provalar, sunum hazırlığı.
-- [ ] **Yarışma günü (7-9 Ağustos):** Gerçek Turkcell 5G API'lerinin ve (varsa) bulut
-  ortamının bağlanması.
-
-### Testleri çalıştırma
+Üçünü birlikte, gerçek bir backend + gerçek AI imajına karşı test etmek
+için:
 
 ```bash
 cd backend
-pip install -r requirements-dev.txt
-python -m pytest tests/ -q
+JOB_STORAGE_PATH=./.local-jobs USE_MOCK_5G=true python -m uvicorn app.main:app --port 8000
 ```
 
-- `tests/test_streaming_equivalence.py` — yeni gerçek-zamanlı dedektörlerin, FTR'de
-  teslim edilen batch mantığıyla aynı sonucu ürettiğinin kanıtı (rastgele üretilmiş
-  yüzlerce senaryo ile).
-- `tests/test_service_pipeline.py` — ROI akışı mantığının uçtan uca doğrulaması
-  (sahte modellerle, böylece beklenen tespitin çıkması *kesin* olarak test edilir).
+```bash
+cd mobile
+flutter run --dart-define=BACKEND_URL=http://localhost:8000
+```
 
-Tüm bu adımların gerekçesi, alınan mimari kararlar, risk kaydı ve doğrulama planı için
-bkz. **[`PLAN.md`](./PLAN.md)**.
+## Durum ve Yol Haritası
+
+- [x] **Backend ↔ Mobil** — NV/QoD/video akışının tamamı gerçek HTTP ile
+  uçtan uca doğrulandı.
+- [x] **AI imajı** — build alıyor, GPU'da çalışıyor, gerçek yarışma
+  videosundan şema-geçerli sonuç üretiyor.
+- [x] **Uçtan uca** — mobil servis kodu → backend → gerçek AI imajı →
+  sonuç zinciri baştan sona kanıtlandı.
+- [ ] **VM doğrulaması** — imaj boyutu (şu an 10.8GB, limit 8GB — temizlik
+  yazıldı, henüz ölçülmedi) ve çalışma süresi (578sn, limit 600sn) gerçek
+  donanımda (Tesla T4) yeniden ölçülecek.
+- [ ] **7 Ağustos** — gerçek Turkcell erişimi açılınca `USE_MOCK_5G=false`
+  ile tam kuru prova + imaj dondurma.
+
+Detaylı yol haritası, açık riskler ve gerekçeler için bkz.
+**[`PLAN.md`](./PLAN.md)**.
 
 ## Takım
 
@@ -237,15 +145,19 @@ bkz. **[`PLAN.md`](./PLAN.md)**.
 | Akademik Danışman | Proje takibi ve danışmanlık |
 | Kaptan — Sunucu ve Veri Tabanı Mimarı | Backend mimarisi (bu repo) |
 | 5G API Entegrasyonu | Turkcell Open Gateway (Number Verification, QoD) entegrasyonu |
-| Yapay Zekâ / Görüntü İşleme | Model geliştirme, eğitim, doğruluk iyileştirme |
+| Yapay Zekâ / Görüntü İşleme | AI pipeline'ı, model geliştirme, doğruluk iyileştirme |
 | Sistem Entegrasyonu ve Test | Uçtan uca test, saha provaları |
-| Mobil Uygulama Geliştirici | Flutter uygulaması, uç birim (edge) optimizasyonu |
+| Mobil Uygulama Geliştirici | Flutter uygulaması |
 
 ## Daha Fazla Bilgi
 
-- **[`PLAN.md`](./PLAN.md)** — mimari kararlar, gerekçeler, kod incelemesi bulguları,
-  risk kaydı, gün gün yapım planı. Projeye yeni katılan biri "neden böyle" sorusunun
-  cevabını burada bulur.
-- `backend/README.md` — backend'e özel kurulum/çalıştırma detayları.
-- `backend/app/services/vehicle_ai/_ftr_reference/README.md` — FTR'de teslim edilen
-  orijinal AI koduna dair not.
+- **[`PLAN.md`](./PLAN.md)** — mimari kararlar, gerekçeler, tamamlanan
+  işler, yol haritası, açık riskler, doğrulama planı.
+- **[`docs/mobile-integration.md`](./docs/mobile-integration.md)** —
+  backend ↔ mobil sözleşmesi (tek doğruluk kaynağı).
+- **[`docs/ai-integration.md`](./docs/ai-integration.md)** — backend ↔ AI
+  sözleşmesi, resmi Docker kısıtları, AI ekibi için onboarding.
+- **[`backend/README.md`](./backend/README.md)**,
+  **[`mobile/README.md`](./mobile/README.md)**,
+  **[`mobile/CLAUDE.md`](./mobile/CLAUDE.md)** — parçaya özel kurulum ve
+  bilinen kısıtlar.

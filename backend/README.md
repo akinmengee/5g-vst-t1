@@ -61,8 +61,7 @@ python -m pytest tests/test_routes_auth.py tests/test_routes_qod.py \
 | `TURKCELL_CLIENT_ID` / `TURKCELL_CLIENT_SECRET` | boş | OAuth2 kimlik bilgileri (yalnızca backend'de tutulur). |
 | `TURKCELL_REDIRECT_URI` | boş | Turkcell'e önceden kayıtlı callback: `http://<VM_IP>:8080/api/auth/callback` |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | Backend'e **dışarıdan** erişilen adres; yalnızca mock modda sahte onay sayfası için. Gerçek telefonla test ederken LAN IP'si olmalı (`http://192.168.1.50:8000`) — `localhost` telefonun kendisini işaret eder. |
-| `AI_RUNNER_MODE` | `mock` | `docker` → gerçek `docker run teknofest-2026/vst-t1`. |
-| `AI_DOCKER_IMAGE` | `teknofest-2026/vst-t1:latest` | Tetiklenecek AI imajı. |
+| `AI_DOCKER_IMAGE` | `teknofest-2026/vst-t1:latest` | Tetiklenecek AI imajı. Sahte çalıştırıcı yoktur; imaj her zaman gerçekten koşar. |
 | `JOB_STORAGE_PATH` | `/srv/jobs` | Job giriş/çıkış klasörleri. **Windows'ta override şart** (örn. `./.local-jobs`). |
 | `JOB_TIMEOUT_SECONDS` | `600` | AI çalıştırma üst sınırı (hakem limitiyle aynı: 10 dk). |
 | `FLOW_TTL_SECONDS` | `1200` | İşlem görmeyen NV/QoD flow'larının hafızadan düşme süresi. |
@@ -99,8 +98,8 @@ zorunda.
 - [x] NV: login / callback / status (3-legged OIDC, Bölüm H)
 - [x] QoD: start (tek senkron çağrı, 409=başarı kuralı, Bölüm I)
 - [x] Video: upload (202+job) / result (polling), `docker run` tetikleme (Bölüm J)
-- [x] Mock katmanları: `MockOpenGatewayClient`, `MockAiRunner` (imaj olmadan uçtan uca test)
-- [x] 37 yeni backend testi + uçtan uca mock duman testi geçiyor
+- [x] Sahte AI çalıştırıcı KALDIRILDI — video her zaman gerçek `ai/` imajına gider
+- [x] Mobil ↔ backend uçtan uca gerçek HTTP ile doğrulandı
 - [x] Eski edge-AI/WebSocket mimarisi backend'den tamamen kaldırıldı
 - [ ] `ai/` imajı: `batch_main.py` + Dockerfile (ayrı faz — plan P0)
 - [ ] VM'de gerçek ortam doğrulaması (`AI_RUNNER_MODE=docker`, gerçek Turkcell)

@@ -235,13 +235,6 @@ backend/.local-jobs/
 # Claude Code (kişisel oturum durumu / kilit dosyaları — takım arkadaşlarında
 # farklı olabilir, önceki bir branch'te yanlışlıkla commit'lenmişti)
 .claude/
-CLAUDE.md
-mobile/CLAUDE.md
-
-# Yerel veri: faz2 videosu + portable araçlar (büyük ikililer; GT json'ları commit'lenir)
-data/bin/
-data/**/*.mp4
-data/**/*.ts
 
 # Flutter
 mobile/build/

@@ -1,3 +1,20 @@
+# Model ağırlıkları — büyük binary dosyalar (bu klasörde şu an ~230MB),
+# git'e girmez, ayrı paylaşılır. Kökteki *.pt (örn. yanlışlıkla ai/ köküne
+# düşen yolo11n.pt gibi) de dahil.
+weights/*.pt
+weights/*.task
+*.pt
+
+# Ultralytics YOLO, predict()/track() çağrılarında varsayılan olarak buraya
+# görselleştirilmiş çıktı (kutu çizilmiş kare/video) yazar — save=False
+# verilmediği sürece oluşur, yerel denemede sürekli çıkar.
+runs/
+
+# Docker imajının kendi içinde kullandığı input/output klasörleri; yerel
+# (konteynersiz) denemede de aynı yollar oluşabilir.
+data/input/
+data/output/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -235,13 +252,6 @@ backend/.local-jobs/
 # Claude Code (kişisel oturum durumu / kilit dosyaları — takım arkadaşlarında
 # farklı olabilir, önceki bir branch'te yanlışlıkla commit'lenmişti)
 .claude/
-CLAUDE.md
-mobile/CLAUDE.md
-
-# Yerel veri: faz2 videosu + portable araçlar (büyük ikililer; GT json'ları commit'lenir)
-data/bin/
-data/**/*.mp4
-data/**/*.ts
 
 # Flutter
 mobile/build/
@@ -252,3 +262,4 @@ mobile/.flutter-plugins-dependencies
 # OS
 .DS_Store
 Thumbs.db
+
