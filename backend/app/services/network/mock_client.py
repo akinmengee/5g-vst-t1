@@ -14,12 +14,18 @@ import asyncio
 import random
 import uuid
 
+from app.core.config import settings
 from app.services.network.interface import QodResult, TokenResult
 
 
 class MockOpenGatewayClient:
     def build_authorize_url(self, flow_id: str, phone_number: str) -> str:
-        return f"https://mock-turkcell.local/oauth2/authorize?state={flow_id}"
+        # Gerçek Turkcell'e değil, backend'in kendi sahte onay sayfasına
+        # yönlendirir (routes_auth.py::mock_consent). Böylece mobil, WebView
+        # açma/kapatma + status polling mantığını gerçek API olmadan uçtan uca
+        # test edebilir; ulaşılamayan bir adres olsaydı WebView boş kalır ve
+        # callback hiç tetiklenmezdi.
+        return f"{settings.public_base_url}/api/auth/mock-consent?state={flow_id}"
 
     async def exchange_code_for_token(self, code: str) -> TokenResult:
         await asyncio.sleep(0.05)

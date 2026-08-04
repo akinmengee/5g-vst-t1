@@ -32,6 +32,10 @@ Endpoint'ler (tam istek/yanıt şemaları `docs/mobile-integration.md`'de):
 - `GET  /health` → `{"status": "ok"}`
 - `POST /api/auth/login` → NV akışını başlatır (`flow_id` + `authorize_url`)
 - `GET  /api/auth/callback` → Turkcell'in yönlendirdiği OAuth callback
+- `GET  /api/auth/mock-consent` → **yalnızca mock modda**: Turkcell'in onay
+  sayfasının yerine geçer, callback'e yönlendirir. Gerçek modda `404` döner.
+  Mobilin, gerçek Turkcell erişimi olmadan WebView akışını uçtan uca test
+  edebilmesini sağlar (mobil tarafta hiçbir kod farkı yok).
 - `GET  /api/auth/status/{flow_id}` → NV durumu (mobil poller)
 - `POST /api/qod/start` → QoD oturumu açar (201+REQUESTED = başarı)
 - `POST /api/videos/upload` → multipart video, `202` + `job_id`
@@ -56,6 +60,7 @@ python -m pytest tests/test_routes_auth.py tests/test_routes_qod.py \
 | `TURKCELL_API_BASE_URL` | boş | `https://opengateway.turkcell.com.tr` |
 | `TURKCELL_CLIENT_ID` / `TURKCELL_CLIENT_SECRET` | boş | OAuth2 kimlik bilgileri (yalnızca backend'de tutulur). |
 | `TURKCELL_REDIRECT_URI` | boş | Turkcell'e önceden kayıtlı callback: `http://<VM_IP>:8080/api/auth/callback` |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | Backend'e **dışarıdan** erişilen adres; yalnızca mock modda sahte onay sayfası için. Gerçek telefonla test ederken LAN IP'si olmalı (`http://192.168.1.50:8000`) — `localhost` telefonun kendisini işaret eder. |
 | `AI_RUNNER_MODE` | `mock` | `docker` → gerçek `docker run teknofest-2026/vst-t1`. |
 | `AI_DOCKER_IMAGE` | `teknofest-2026/vst-t1:latest` | Tetiklenecek AI imajı. |
 | `JOB_STORAGE_PATH` | `/srv/jobs` | Job giriş/çıkış klasörleri. **Windows'ta override şart** (örn. `./.local-jobs`). |

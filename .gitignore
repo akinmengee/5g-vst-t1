@@ -14,9 +14,17 @@ backend/weights/*.task
 .env
 .env.local
 
+# Job depolama alanı (yüklenen videolar + AI çıktıları — çalışma zamanı verisi).
+# Windows'ta JOB_STORAGE_PATH=./.local-jobs ile buraya düşer.
+backend/.local-jobs/
+
 # IDE
 .vscode/
 .idea/
+
+# Claude Code (kişisel oturum durumu / kilit dosyaları — takım arkadaşlarında
+# farklı olabilir, önceki bir branch'te yanlışlıkla commit'lenmişti)
+.claude/
 
 # Flutter
 mobile/build/

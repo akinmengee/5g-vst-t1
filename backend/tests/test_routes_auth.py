@@ -4,6 +4,8 @@ Gateway, tests/network_stubs.py'deki FakeOpenGatewayClient ile değiştirilir;
 Turkcell'e hiçbir gerçek çağrı yapılmaz.
 """
 
+from app.core.config import settings
+from app.services.network.mock_client import MockOpenGatewayClient
 from tests.network_stubs import FakeOpenGatewayClient
 from tests.route_helpers import flow_yarat, taze_ortam
 
@@ -83,6 +85,41 @@ def test_status_dogrulanan_flow_devicePhoneNumberVerified_true_doner(monkeypatch
     client.get(f"/api/auth/callback?state={fid}&code=abc123")
     durum = client.get(f"/api/auth/status/{fid}").json()
     assert durum["devicePhoneNumberVerified"] is True
+
+
+def test_mock_consent_callbacke_yonlendirir(monkeypatch, tmp_path):
+    """Sahte onay sayfası, Turkcell'in yapacağı callback yönlendirmesini taklit eder."""
+    client = taze_ortam(monkeypatch, tmp_path, gateway=FakeOpenGatewayClient())
+    resp = client.get("/api/auth/mock-consent?state=deneme-flow", follow_redirects=False)
+    assert resp.status_code == 307
+    hedef = resp.headers["location"]
+    assert "/api/auth/callback" in hedef
+    assert "state=deneme-flow" in hedef
+
+
+def test_mock_consent_gercek_modda_404_doner(monkeypatch, tmp_path):
+    """USE_MOCK_5G=false iken sahte onay sayfası yarışma günü canlıda bulunamaz."""
+    client = taze_ortam(monkeypatch, tmp_path, gateway=FakeOpenGatewayClient())
+    monkeypatch.setattr(settings, "use_mock_5g", False)
+    resp = client.get("/api/auth/mock-consent?state=deneme-flow", follow_redirects=False)
+    assert resp.status_code == 404
+
+
+def test_mock_modda_authorize_url_takip_edilince_flow_verified_olur(monkeypatch, tmp_path):
+    """Mobilin gerçek WebView akışı: authorize_url'i aç → sonunda verified.
+
+    Mobil ekibin gerçek Turkcell erişimi olmadan uçtan uca test edebilmesinin
+    dayanağı bu: WebView'in yaptığı şeyin aynısını (authorize_url'e GET, ardından
+    yönlendirmeleri takip) yapıyoruz ve akışın sonunda status verified oluyor.
+    """
+    client = taze_ortam(monkeypatch, tmp_path, gateway=MockOpenGatewayClient())
+    monkeypatch.setattr(settings, "public_base_url", "http://testserver")
+    login = client.post("/api/auth/login", json={"phoneNumber": "+905390000020"}).json()
+
+    client.get(login["authorize_url"], follow_redirects=True)
+
+    durum = client.get(f"/api/auth/status/{login['flow_id']}").json()
+    assert durum["status"] == "verified"
 
 
 def test_status_hatada_error_code_ve_message_doner(monkeypatch, tmp_path):

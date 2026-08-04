@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # http://<VM_IP>:8080/api/auth/callback
     turkcell_redirect_uri: str = ""
 
+    # Backend'e DIŞARIDAN (telefon/emülatör) erişilebilen adres. Yalnızca mock
+    # modda kullanılır: MockOpenGatewayClient.build_authorize_url() mobili
+    # buradaki sahte onay sayfasına yönlendirir (routes_auth.py::mock_consent).
+    # "localhost" fiziksel bir telefonda BACKEND'i değil telefonun kendisini
+    # işaret eder — gerçek cihazla test ederken LAN IP'si yazın
+    # (örn. http://192.168.1.50:8000).
+    public_base_url: str = "http://localhost:8000"
+
     # AI imajını tetikleme modu: "mock" (fixture results.json kopyalar) veya
     # "docker" (gerçek `docker run teknofest-2026/vst-t1`). USE_MOCK_5G ile aynı
     # ilke: bilinçli deploy-zamanı seçimi, sessiz fallback yok.
