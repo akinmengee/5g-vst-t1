@@ -1,0 +1,83 @@
+"""AiRunner birim testleri.
+
+DockerAiRunner.run() gerçek bir `docker run` ile uçtan uca TEST EDİLMİYOR —
+teknofest-2026/vst-t1 imajı henüz yok (ayrı fazın işi). Burada yalnızca
+timeout / non-zero-exit / eksik-results.json dalları, subprocess sahte bir
+process ile değiştirilerek doğrulanır; gerçek imaj hazır olunca
+AI_RUNNER_MODE=docker ile elle uçtan uca doğrulama yapılacak.
+"""
+
+import asyncio
+import json
+
+import pytest
+
+from app.schemas.detection import SonucJson
+from app.services.orchestration.ai_runner import AiRunnerError, DockerAiRunner, MockAiRunner
+from tests.route_helpers import FIXTURE_RESULTS
+
+
+class _SahteProc:
+    """asyncio.create_subprocess_exec'in döndürdüğü process'in sahtesi."""
+
+    def __init__(self, returncode: int = 0, takilsin: bool = False):
+        self.returncode = returncode
+        self._takilsin = takilsin
+        self.kill_edildi = False
+
+    async def communicate(self):
+        if self._takilsin:
+            await asyncio.sleep(3600)
+        return b"", b"sahte stderr"
+
+    def kill(self):
+        self.kill_edildi = True
+
+    async def wait(self):
+        return self.returncode
+
+
+def _docker_runner(monkeypatch, proc: _SahteProc) -> DockerAiRunner:
+    monkeypatch.setattr("shutil.which", lambda cmd: "C:/sahte/docker.exe")
+
+    async def sahte_exec(*cmd, **kwargs):
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", sahte_exec)
+    runner = DockerAiRunner(image="teknofest-2026/vst-t1:latest", timeout_seconds=600)
+    runner._timeout = 0.05  # test hızı için kısaltılır
+    return runner
+
+
+def test_mock_ai_runner_results_json_uretir_ve_sonuc_schema_ile_uyumlu(tmp_path):
+    """MockAiRunner'ın kopyaladığı fixture, resmi SonucJson şemasından geçer."""
+    runner = MockAiRunner(FIXTURE_RESULTS, delay_seconds=0.0)
+    output_dir = tmp_path / "output"
+    asyncio.run(runner.run("test-job", tmp_path / "video.mp4", output_dir))
+    raw = json.loads((output_dir / "results.json").read_text(encoding="utf-8"))
+    sonuc = SonucJson.model_validate(raw)
+    assert sonuc.video_id == "mock-video"
+    assert sonuc.arac_bilgisi.tip == "sedan"
+
+
+def test_docker_runner_zaman_asiminda_kill_edilir_ve_hata_firlatir(monkeypatch, tmp_path):
+    """10 dk sınırı aşılırsa process öldürülür ve AiRunnerError fırlatılır."""
+    proc = _SahteProc(takilsin=True)
+    runner = _docker_runner(monkeypatch, proc)
+    with pytest.raises(AiRunnerError, match="zaman aşımı"):
+        asyncio.run(runner.run("j", tmp_path / "input" / "video.mp4", tmp_path / "output"))
+    assert proc.kill_edildi
+
+
+def test_docker_runner_sifir_disi_cikista_hata_firlatir(monkeypatch, tmp_path):
+    """Container hata koduyla biterse stderr özetiyle AiRunnerError fırlatılır."""
+    runner = _docker_runner(monkeypatch, _SahteProc(returncode=1))
+    with pytest.raises(AiRunnerError, match="çıkış kodu 1"):
+        asyncio.run(runner.run("j", tmp_path / "input" / "video.mp4", tmp_path / "output"))
+
+
+def test_docker_runner_results_json_uretilmezse_hata_firlatir(monkeypatch, tmp_path):
+    """Exit 0 ama results.json yoksa sessiz başarı YOKTUR, hata fırlatılır."""
+    runner = _docker_runner(monkeypatch, _SahteProc(returncode=0))
+    with pytest.raises(AiRunnerError, match="results.json üretmedi"):
+        asyncio.run(runner.run("j", tmp_path / "input" / "video.mp4", tmp_path / "output"))

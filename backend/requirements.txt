@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pydantic>=2.0
+pydantic-settings
+python-multipart
+httpx

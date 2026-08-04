@@ -1,2 +1,36 @@
+<<<<<<< HEAD
 *.mp4
 *.zip
+=======
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Model weights (büyük dosyalar, ayrı paylaşılır)
+backend/weights/*.pt
+backend/weights/*.task
+!backend/weights/.gitkeep
+
+# Env
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Flutter
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+
+# OS
+.DS_Store
+Thumbs.db
+
+.pytest_cache/
+>>>>>>> main
