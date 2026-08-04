@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,13 +13,35 @@ class Settings(BaseSettings):
     # cwd'ye bağımlı değil (predict.py'deki WEIGHTS_DIR sorununun çözümü).
     model_dir: Path = BACKEND_DIR / "weights"
 
-    # 5G Open Gateway (Number Verification, QoD) gerçek API'ler yarışma günü verilecek.
+    # 5G Open Gateway (Number Verification, QoD).
     # True iken MockOpenGatewayClient, False iken TurkcellOpenGatewayClient kullanılır.
     # Bu bir "ortam tespiti" değil, deploy zamanında bilinçli seçilen bir konfigürasyondur.
     use_mock_5g: bool = True
 
     turkcell_api_base_url: str = ""
-    turkcell_api_key: str = ""
+    # OAuth2 Authorization Code Flow kimlik bilgileri (OGW_Teknofest.pdf adım 7:
+    # HTTP Basic Auth = base64(client_id:client_secret)). Yalnızca backend'de tutulur,
+    # mobil uygulamaya asla gömülmez.
+    turkcell_client_id: str = ""
+    turkcell_client_secret: str = ""
+    # Turkcell'e önceden kayıtlı callback adresi, örn:
+    # http://<VM_IP>:8080/api/auth/callback
+    turkcell_redirect_uri: str = ""
+
+    # AI imajını tetikleme modu: "mock" (fixture results.json kopyalar) veya
+    # "docker" (gerçek `docker run teknofest-2026/vst-t1`). USE_MOCK_5G ile aynı
+    # ilke: bilinçli deploy-zamanı seçimi, sessiz fallback yok.
+    ai_runner_mode: Literal["mock", "docker"] = "mock"
+    ai_docker_image: str = "teknofest-2026/vst-t1:latest"
+    job_storage_path: Path = Path("/srv/jobs")
+    # Hakem değerlendirmesindeki inference limitiyle tutarlı (Doküman 1 madde 5).
+    job_timeout_seconds: int = 600
+
+    # NV login → WebView → QoD → HLS kaydı → upload zincirinin tamamını kapsayacak
+    # genişlikte; erişim oldukça touch ile yenilenir.
+    flow_ttl_seconds: float = 1200.0
+    # DONE/FAILED job'lar bu süre sonra hafızadan düşürülür; PROCESSING asla düşmez.
+    job_result_ttl_seconds: float = 3600.0
 
     log_level: str = "INFO"
 

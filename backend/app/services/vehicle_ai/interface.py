@@ -2,7 +2,7 @@
 
 Değişken/dış bağımlılık: model kalitesi ve model dosyalarının kendisi. Modeller
 güncellendiğinde sadece bu arayüzü uygulayan implementasyon (current_model_service.py)
-değişir, geri kalan kod (routes, WebSocket akışı) etkilenmez.
+değişir, geri kalan kod etkilenmez.
 """
 
 from typing import Protocol

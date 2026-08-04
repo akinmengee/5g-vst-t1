@@ -1,7 +1,10 @@
 # Backend — VST T1 Akıllı Yol Güvenliği
 
-FastAPI tabanlı backend. Detaylı mimari/karar gerekçeleri için repo kökündeki
-`PLAN.md` dosyasına bakın.
+FastAPI tabanlı, mobil-yüzlü NV/QoD/video orkestrasyon API'si. AI çıkarımı bu
+process'te ÇALIŞMAZ: backend videoyu diske yazıp ayrı bir Docker imajını
+(`teknofest-2026/vst-t1`) tetikleyen ince bir katmandır — bu yüzden
+torch/opencv bağımlılığı yoktur. Mobil tarafın uyacağı tam sözleşme:
+`docs/mobile-integration.md`.
 
 ## Yerel kurulum
 
@@ -9,56 +12,90 @@ FastAPI tabanlı backend. Detaylı mimari/karar gerekçeleri için repo kökünd
 cd backend
 python -m venv .venv
 .venv\Scripts\activate        # Windows
-pip install -r requirements.txt
+pip install -r requirements.txt        # hafif — ML bağımlılığı YOK
 ```
 
-> Not: `requirements.txt` GPU'lu PyTorch indirir (büyük). CPU'da geliştirme
-> yapacaksanız `torch`/`torchvision` satırlarını CPU wheel'leriyle değiştirebilirsiniz.
+> AI-core testlerini (`test_service_pipeline.py`, `test_streaming_equivalence.py`)
+> de çalıştırmak istiyorsanız `pip install -r requirements-dev.txt` — bu, ai/
+> paketine taşınana kadar geçici olarak torch/opencv vb. kurar (büyük indirme).
 
 ## Çalıştırma
 
 ```bash
-uvicorn app.main:app --reload --app-dir .
+# Windows'ta JOB_STORAGE_PATH mutlaka override edilmeli (/srv/jobs Linux yolu):
+# .env dosyasına JOB_STORAGE_PATH=./.local-jobs yazın.
+uvicorn app.main:app --reload
 ```
 
-- `GET /health` → `{"status": "ok"}`
-- `WS /ws/stream` → mobilin (edge yolov8n tespiti sonrası) kırpılmış araç ROI'lerini
-  gönderdiği uç. Şema: `app/schemas/mobile_contract.py::MobileRoiPayload`.
+Endpoint'ler (tam istek/yanıt şemaları `docs/mobile-integration.md`'de):
 
-## Mock veriyle uçtan uca test (mobil kodu olmadan)
+- `GET  /health` → `{"status": "ok"}`
+- `POST /api/auth/login` → NV akışını başlatır (`flow_id` + `authorize_url`)
+- `GET  /api/auth/callback` → Turkcell'in yönlendirdiği OAuth callback
+- `GET  /api/auth/status/{flow_id}` → NV durumu (mobil poller)
+- `POST /api/qod/start` → QoD oturumu açar (201+REQUESTED = başarı)
+- `POST /api/videos/upload` → multipart video, `202` + `job_id`
+- `GET  /api/videos/{job_id}/result` → `PROCESSING|DONE|FAILED` + results.json
+
+## Testler
 
 ```bash
-# 1) Backend'i bir terminalde çalıştır
-uvicorn app.main:app --reload
-
-# 2) Mock fixture'ları uret (ilk seferde)
-python -m app.fixtures.mock_mobile_payloads.generate_fixtures
-
-# 3) Fixture'ları backend'e gönder, cevapları gör
-python -m app.fixtures.mock_mobile_payloads.send_mock_stream
+cd backend
+python -m pytest tests/ -v
+# Yalnızca yeni backend testleri (ML bağımlılığı gerektirmez):
+python -m pytest tests/test_routes_auth.py tests/test_routes_qod.py \
+  tests/test_routes_videos.py tests/test_flow_registry.py \
+  tests/test_job_registry.py tests/test_ai_runner.py tests/test_turkcell_client.py
 ```
 
 ## Ortam değişkenleri (`.env` veya shell)
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
-| `USE_MOCK_5G` | `true` | `false` yapılınca gerçek `TurkcellOpenGatewayClient` kullanılır (yarışma günü). |
-| `MODEL_DIR` | `backend/weights` | Model ağırlıklarının bulunduğu klasör. |
-| `TURKCELL_API_BASE_URL` / `TURKCELL_API_KEY` | boş | Gerçek 5G Open Gateway credential'ları (yarışma günü doldurulacak). |
+| `USE_MOCK_5G` | `true` | `false` → gerçek `TurkcellOpenGatewayClient` (yarışma günü). Sessiz fallback YOK. |
+| `TURKCELL_API_BASE_URL` | boş | `https://opengateway.turkcell.com.tr` |
+| `TURKCELL_CLIENT_ID` / `TURKCELL_CLIENT_SECRET` | boş | OAuth2 kimlik bilgileri (yalnızca backend'de tutulur). |
+| `TURKCELL_REDIRECT_URI` | boş | Turkcell'e önceden kayıtlı callback: `http://<VM_IP>:8080/api/auth/callback` |
+| `AI_RUNNER_MODE` | `mock` | `docker` → gerçek `docker run teknofest-2026/vst-t1`. |
+| `AI_DOCKER_IMAGE` | `teknofest-2026/vst-t1:latest` | Tetiklenecek AI imajı. |
+| `JOB_STORAGE_PATH` | `/srv/jobs` | Job giriş/çıkış klasörleri. **Windows'ta override şart** (örn. `./.local-jobs`). |
+| `JOB_TIMEOUT_SECONDS` | `600` | AI çalıştırma üst sınırı (hakem limitiyle aynı: 10 dk). |
+| `FLOW_TTL_SECONDS` | `1200` | İşlem görmeyen NV/QoD flow'larının hafızadan düşme süresi. |
+| `JOB_RESULT_TTL_SECONDS` | `3600` | DONE/FAILED job kayıtlarının saklanma süresi (PROCESSING asla düşmez). |
+| `MODEL_DIR` | `backend/weights` | (Eski AI-core kodu için; yeni backend kullanmaz.) |
+| `LOG_LEVEL` | `INFO` | |
 
-## Model ağırlıkları
+## Eski mimarinin durumu
 
-`backend/weights/` klasörüne şu dosyalar konulmalı (paylaşılan model envanteri —
-büyük binary dosyalar oldukları için git'e eklenmiyor, `.gitignore`'a bakın):
-`yolov8n.pt`, `yolov8s.pt`, `yolov8n-pose.pt`, `yolov8s-cls.pt`, `kasa_modeli.pt`,
-`renk_modeli.pt`, `plaka_modeli.pt`, `karakter_modeli.pt`, `kemer_v3.pt`,
-`sigara_v1.pt`, `su_v2.pt`, `telefon_temiz_v1.pt`, `teknocan.pt`, `slalom_lstm.pt`,
-`face_landmarker.task`.
+Mobil edge-AI + WebSocket ROI-stream mimarisi (eski `routes_inference.py`,
+`/ws/stream`, mock ROI fixture'ları) **tamamen kaldırıldı** — organizasyonun
+resmi final akışının bir parçası değildi (bkz. `docs/mobile-integration.md`
+ve final yarışma senaryosu). Backend'de bugün bu mimariden hiçbir iz yok.
 
-## Durum (Gün 0-1)
+Tek istisna: `app/services/vehicle_ai/*` (dedektörler, oylama, event gate —
+200+ test) **kasıtlı olarak korunuyor.** Bu, "eski mimari" değil, resmi FTR
+formatına göre çalışan ve ayrı bir Docker imajına (`ai/`) taşınacak olan AI
+çekirdeğinin kendisi — S1 kararı gereği sıfırdan yazılmıyor, taşınıyor. Yeni
+`main.py` bu kodu import etmiyor (backend artık ML bağımlılığı taşımıyor);
+kod ve testleri yalnızca `ai/` fazı başlayana kadar referans olarak burada
+duruyor. Model ağırlıkları (`backend/weights/`) da o imajın parçası olacak.
 
-- [x] FastAPI iskeleti, `/health`, `/ws/stream`
-- [x] Mobil-backend veri sözleşmesi (Pydantic şemaları)
-- [x] `VehicleAnalysisService` / `OpenGatewayClient` arayüzleri + mock implementasyonlar
-- [x] Mock mobil veri üreticisi
-- [ ] Gerçek model entegrasyonu + incremental refactor (Gün 4-7, bkz. `PLAN.md`)
+## Deploy
+
+Backend'in kendi Dockerfile'ı **yok** — S2/G3 kararı gereği (organizasyon
+teyidi: backend'in hakeme teslim edilen `teknofest-2026/*` imajının içinde
+olması gerekmiyor). VM'de düz bir `uvicorn app.main:app` process'i olarak
+çalıştırılır (systemd/`tmux`/kendi ayrı container'ı — serbest, organizasyon
+karışmıyor). Sadece AI imajı (`ai/`) `teknofest-2026/` adıyla paketlenmek
+zorunda.
+
+## Durum
+
+- [x] NV: login / callback / status (3-legged OIDC, Bölüm H)
+- [x] QoD: start (tek senkron çağrı, 409=başarı kuralı, Bölüm I)
+- [x] Video: upload (202+job) / result (polling), `docker run` tetikleme (Bölüm J)
+- [x] Mock katmanları: `MockOpenGatewayClient`, `MockAiRunner` (imaj olmadan uçtan uca test)
+- [x] 37 yeni backend testi + uçtan uca mock duman testi geçiyor
+- [x] Eski edge-AI/WebSocket mimarisi backend'den tamamen kaldırıldı
+- [ ] `ai/` imajı: `batch_main.py` + Dockerfile (ayrı faz — plan P0)
+- [ ] VM'de gerçek ortam doğrulaması (`AI_RUNNER_MODE=docker`, gerçek Turkcell)
