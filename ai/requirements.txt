@@ -13,7 +13,15 @@
 torch==2.5.1+cu121
 torchvision==0.20.1+cu121
 
-opencv-python-headless
+# Burada bilerek opencv-python / opencv-python-headless / opencv-contrib-python
+# YAZILMIYOR — ultralytics kendi opencv-python'ını, mediapipe kendi
+# opencv-contrib-python'ını transitive olarak zaten çekiyor (ikisi de "cv2"
+# adında aynı paketi sağlıyor, GUI'li tam sürüm). Dockerfile'da bunlardan
+# yalnızca opencv-python (tekrarlayan) kaldırılır, opencv-contrib-python
+# (süper küme, imshow dahil) kalır. headless SÜRÜM BİLEREK KULLANILMIYOR:
+# ultralytics import anında `cv2.imshow`'a referans veriyor (hiç çağırmasa
+# bile) — headless'te bu attribute yok, import `AttributeError` ile patlıyor
+# (bir kez böyle kırılıp VM'de doğrulandı).
 numpy
 ultralytics
 mediapipe

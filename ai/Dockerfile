@@ -23,15 +23,25 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt \
     # ultralytics opencv-python, mediapipe opencv-contrib-python çeker; ikisi de
-    # headless sürümle aynı `cv2` modülünü sağlar. Üç kopya taşımanın anlamı yok
-    # (imajda GUI yok — headless zaten doğru olan).
-    && pip3 uninstall -y opencv-python opencv-contrib-python \
+    # AYNI `cv2/` yoluna dosya yazıyor (üst üste biniyor) — pip kurulum sırasına
+    # göre sonra kurulan öncekinin dosyalarının üzerine yazıyor. BİLEREK
+    # İKİSİ DE KALDIRILMIYOR: `pip3 uninstall -y opencv-python` denendi, pip bunu
+    # KENDİ kayıtlı dosya listesine göre siliyor — o yollardaki içerik artık
+    # contrib'e ait olsa bile hepsini götürüyor, `cv2` paketi komple bozuluyor
+    # ("AttributeError: module 'cv2' has no attribute 'imshow'", VM'de doğrulandı).
+    # Paylaşılan yol yüzünden hangisini "kaldır" desek aynı risk var — ~150MB'lık
+    # tekrar burada göze alınıyor, boyut kazancı başka paketlerden aranmalı
+    # (bkz. PLAN.md "Bilinen Riskler" — nccl/matplotlib/polars adayları).
     # triton yalnızca torch.compile/inductor içindir; YOLO çıkarımı kullanmıyor.
     && pip3 uninstall -y triton \
-    # C++ eklentisi derlemiyoruz: başlıklar ve test yardımcıları gereksiz.
+    # C++ eklentisi derlemiyoruz: başlıklar ve pytest test suite'i gereksiz.
+    # DİKKAT: torch/testing (tekil) BURAYA EKLENMEZ — torch/autograd/gradcheck.py
+    # `import torch.testing` yapıyor, torch'un kendi __init__ zincirinin parçası;
+    # silinince "ModuleNotFoundError: No module named 'torch.testing'" ile import
+    # torch tamamen kırılıyor (bir kez böyle kırılıp VM'de tam traceback ile
+    # doğrulandı — bkz. git geçmişi).
     && rm -rf /usr/local/lib/python3.10/dist-packages/torch/include \
               /usr/local/lib/python3.10/dist-packages/torch/test \
-              /usr/local/lib/python3.10/dist-packages/torch/testing \
     && find /usr/local/lib/python3.10/dist-packages -name "__pycache__" -type d -prune -exec rm -rf {} + \
     && find /usr/local/lib/python3.10/dist-packages -name "*.pyc" -delete
 
