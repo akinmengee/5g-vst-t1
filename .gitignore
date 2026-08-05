@@ -237,6 +237,7 @@ backend/.local-jobs/
 .claude/
 CLAUDE.md
 mobile/CLAUDE.md
+elimde-bir-proje-var-rustling-tiger.md
 
 # Yerel veri: faz2 videosu + portable araçlar (büyük ikililer; GT json'ları commit'lenir)
 data/bin/
