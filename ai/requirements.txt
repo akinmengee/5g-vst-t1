@@ -1,28 +1,8 @@
-# PyTorch, CUDA 12.1 derlemesine SABİTLENMİŞTİR.
-#
-# Neden sabit: `--extra-index-url` pip'e "buraya da bak" der, "sadece buraya bak"
-# demez — sürüm sabitlenmezse pip PyPI'daki daha yeni torch'u (CUDA 13 ile
-# paketlenmiş) seçer. O da sürücü >= 580 ister; 12.x sürücülü bir makinede
-# `torch.cuda.is_available()` False döner, iş sessizce CPU'ya düşer ve 10
-# dakikalık çıkarım sınırı aşılır. Bu bizzat başımıza geldi (torch 2.13+cu130,
-# sürücü 12.9 → GPU yok).
-#
-# cu121 tekerlekleri hem yarışmanın temel imajıyla (nvidia/cuda:12.1.0) hem de
-# daha yeni sürücülerle uyumludur — geriye dönük güvenli olan yön budur.
 --extra-index-url https://download.pytorch.org/whl/cu121
-torch==2.5.1+cu121
-torchvision==0.20.1+cu121
-
-# Burada bilerek opencv-python / opencv-python-headless / opencv-contrib-python
-# YAZILMIYOR — ultralytics kendi opencv-python'ını, mediapipe kendi
-# opencv-contrib-python'ını transitive olarak zaten çekiyor (ikisi de "cv2"
-# adında aynı paketi sağlıyor, GUI'li tam sürüm). Dockerfile'da bunlardan
-# yalnızca opencv-python (tekrarlayan) kaldırılır, opencv-contrib-python
-# (süper küme, imshow dahil) kalır. headless SÜRÜM BİLEREK KULLANILMIYOR:
-# ultralytics import anında `cv2.imshow`'a referans veriyor (hiç çağırmasa
-# bile) — headless'te bu attribute yok, import `AttributeError` ile patlıyor
-# (bir kez böyle kırılıp VM'de doğrulandı).
+opencv-python-headless
 numpy
 ultralytics
 mediapipe
+torch==2.3.1+cu121
+torchvision==0.18.1+cu121
 lapx

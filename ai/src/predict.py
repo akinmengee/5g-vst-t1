@@ -13,7 +13,10 @@ from mediapipe.tasks.python import vision as mp_vision
 import torch
 import torch.nn as nn
 
-from src.utils import tespit_olustur, arac_bilgisi_olustur, sonuc_birlestir
+from src.utils import (
+    tespit_olustur, arac_bilgisi_olustur, sonuc_birlestir,
+    GECERLI_SOFOR_EYLEMI, GECERLI_NESNELER, GECERLI_YOLCULAR,
+)
 
 warnings.filterwarnings("ignore", message="X does not have valid feature names")
 
@@ -143,18 +146,23 @@ slalom_model.load_state_dict(torch.load(os.path.join(WEIGHTS_DIR, 'slalom_lstm.p
 slalom_model.to(slalom_device)
 slalom_model.eval()
 teknocan_model = YOLO(os.path.join(WEIGHTS_DIR, 'teknocan.pt'))
+# Laptop (COCO class 63) icin AYRI bir yolov8s ornegi: detector_model zaten ana dongude
+# arac takibi icin track(persist=True) ile cagriliyor; laptobu artik arac ROI'sine
+# kirpilmis, kendi track(persist=True) durumunu tasiyan bu ayri ornekle arayacagiz --
+# ayni model nesnesini iki farkli kirpim/cagri stiliyle kullanmak track()'in ic durumunu
+# sifirlar (bkz. yolcu_model / yolcu_model_sofor ayrimi).
+laptop_model = YOLO(os.path.join(WEIGHTS_DIR, 'laptop.pt'))
 
-# AYRI model ornegi: detector_model ana dongude .track(persist=True) ile arac takibi
-# icin kullaniliyor; bulucu ise sofor_kirp() ve yolcu tespiti icinde DUZ predict() ile
-# cagriliyor. Ayni model nesnesini hem track() hem duz predict() icin kullanmak,
-# track()'in kalici (persist=True) ic durumunu sifirliyor (bkz. test_yolcu.py) -- iki
-# ayri model ornegi bu karismayi onluyor.
-bulucu = YOLO(os.path.join(WEIGHTS_DIR, 'yolov8s.pt'))
 poz = YOLO(os.path.join(WEIGHTS_DIR, "yolov8n-pose.pt"))
 # Yolcu (tek-sinif "yolcu") modeli -- ID takipli (BoT-SORT, varsayilan) ile arac ROI'si
 # icinde calisir; kendi ozel model dosyasi oldugu icin ayri bir ornek olmasi baska hicbir
 # karisma riski tasimiyor.
 yolcu_model = YOLO(os.path.join(WEIGHTS_DIR, "yolcu.pt"))
+# Sofor kirpimi icin AYRI bir "yolcu.pt" ornegi: her karede duz predict() ile TAZE sofor
+# konumu bulmak icin kullanilir (bkz. sofor_konumu_bul). Ayni model nesnesini hem burada
+# duz predict() hem yukarida yolcu koltuk rolleri icin track(persist=True) ile cagirmak,
+# track()'in kalici ic durumunu sifirlar -- iki ayri ornek bu karismayi onluyor.
+yolcu_model_sofor = YOLO(os.path.join(WEIGHTS_DIR, "yolcu.pt"))
 # Sigara/telefon artik Masaustu/Models klasorundeki K1-K16 kural setiyle calisiyor --
 # kendi ozel poz modelini (s-pose, n-pose'tan farkli) kullanir; bakinma'nin kullandigi
 # "poz" (n-pose) ile karismasin diye ayri bir ornek.
@@ -222,13 +230,26 @@ def check_slalom(xs):
     return False, best_prob
 
 # === HELPER FUNCTIONS FROM predict.py ===
-KISI_ESIK = 0.20
 BUYUTME = 3
-ESIK = {"su": 0.45, "kemer": 0.50, "esneme": 0.50}
+ESIK = {"su": 0.45, "kemer": 0.45, "esneme": 0.50}
 ARDISIK_GEREK = 2
-KEMER_GEREK = 10
+ESNEME_ARDISIK_SN = 0.3    # konusma sirasindaki kisa agiz acilma-kapanmalarini elemek icin
+                           # esnemenin bu kadar sn sureyle onaylanmasi gerekir (bosluk
+                           # toleransiyla birlikte -- asagida ESNEME_BOSLUK_TOLERANS)
+ESNEME_BOSLUK_TOLERANS = 2 # seri icinde bu kadar ardisik kareye kadar (olcum gurultusu)
+                           # kopma toleransi -- konusmadaki surekli kesintiyi hala eler
 ORAN_ESIK = 2.0; PLATO_GEREK = 8; HAREKET_ESIK = 1.5
-DONUK_OFFSET = 0.30; T_ARKAYA = 4.0; T_ETRAFA_MIN = 1.2
+MAR_MIN_ACIKLIK = 0.015    # oran ne kadar buyuk olursa olsun, agiz bu mutlak acikligi
+                           # gecmiyorsa esneme sayilmaz -- taban neredeyse sifira yakinken
+                           # (agiz kapaliyken) piksel-alti landmark titremesi oranı 2-3
+                           # kat sicratabiliyor, mutlak esik bu gurultuyu eler
+DONUK_OFFSET = 0.30; T_ARKAYA = 3.0; T_ETRAFA_MIN = 1.2
+ARKAYA_ETRAFA_SOGUMA_SN = 6.0  # son bu kadar sn icinde etrafa_bakinma yazildiysa mediapipe-tabanli arkaya_bakma bastirilir
+YUZ_BOSLUK_TOLERANS = 2  # yuz_kayip_seg icin -- bu kadar ardisik "yuz bulundu" titremesi seriyi bozmaz
+ARAC_KENAR_PAY = 3   # arac kutusu kare sol/sag kenarina bu kadar piksel ya da daha az
+                     # kalirsa "kirpilmis/eksik gorunuyor" sayilir -- donus/manevra sirasinda
+                     # arac kismen kadraj disina cikinca "sofor sagda" geometrik varsayimi
+                     # bozuluyor, o karede sofor/sigara/telefon tespiti atlanir
 NOSE, LSHO, RSHO = 0, 5, 6
 
 # === SIGARA + TELEFON (Masaustu/Models klasorundeki K1-K16 kural seti, ayni degerler) ===
@@ -240,10 +261,10 @@ SIGTEL_PENCERE_SN = 1.5         # K6: kanit biriktirme penceresi
 SIGTEL_KANIT_ESIGI = 1.0        # K6: pencerede toplanmasi gereken agirlik
 SIGTEL_SOGUMA_SN = 3.0          # K7: ayni olay bu sure icinde tekrar raporlanmaz
 
-SIGARA_ZAYIF_CONF = 0.30        # K5: bu altindaki tespitler yok sayilir
+SIGARA_ZAYIF_CONF = 0.55        # K5: bu altindaki tespitler yok sayilir
 SIGARA_KIRPIM_BUYUTME = 3       # kirpim modele verilmeden once kac kat buyutulur
 
-TELEFON_ZAYIF_CONF = 0.25       # K5
+TELEFON_ZAYIF_CONF = 0.55       # K5
 TELEFON_TEPE_CONF = 0.50        # K15: pencerede en az bir kare bu guveni asmali
 TELEFON_HEDEF_GENISLIK = 640    # kirpim modele verilmeden once bu genislige olceklenir
 TELEFON_MAKS_ZOOM = 8.0
@@ -261,8 +282,10 @@ TELEFON_ALT_OYNA = "telefonla_oynama"  # NOT: FTR semasinda gecerli tek etiket
                                         # sadece dahili karar/ayirt etme icin kullanilir.
 
 # === YOLCU (test_yolcu.py ile ayni, dogrulanmis degerler) ===
+# NOT: arac kutusu icin ayri bir esik yok -- yolcu, ana dongude zaten hesaplanan
+# current_car_boxes'i (detector_model, conf=0.45) paylasiyor, kendi arac tespitini
+# yapmiyor.
 YOLCU_KISI_ESIK = 0.25     # arac ROI'si icinde kisi tespiti icin taban guven
-YOLCU_CAR_ESIK = 0.35      # arac kutusu icin guven
 YOLCU_ROI_PAD_ORAN = 0.05
 YOLCU_SOFOR_DUP_ORAN = 0.5
 YOLCU_LOCK_MIN_CONF = 0.25
@@ -270,35 +293,61 @@ YOLCU_SOFOR_YENIDEN_KAZANIM_ORANI = 0.20
 YOLCU_ARDISIK_GEREK = 2    # kilitleme icin 2 ardisik (islenen) kare yeterli
 UST_DUDAK, ALT_DUDAK, SOL_KOSE, SAG_KOSE = 13, 14, 78, 308
 
-def sofor_kirp(frame):
-    sonuc = bulucu(frame, conf=0.20, verbose=False)[0]
-    H, W = frame.shape[:2]; kisiler = []; en_arac, ea = None, 0
+def _arac_roi_parlaklik_duzelt(img):
+    # Karanlik/dusuk kontrastli ROI'lerde detaylari gorunur kilmak icin L kanalina CLAHE
+    # uygulanir -- kemer, on_koltuk, su ve esneme bu fonksiyonu paylasir (sigara/telefon
+    # HARIC -- orada yanlis pozitifleri artirdigi icin kaldirildi).
+    if img is None or img.size == 0:
+        return img
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+
+def sofor_konumu_bul(frame, arac_kutusu):
+    """Bu karenin arac ROI'sinden (arac_kutusu) yolcu_model_sofor ile kisiler bulunur;
+    soldan direksiyon farziyla arac merkezinin SAGINDA kalan en buyuk kisi sofor kabul
+    edilir. Onceki karelerden HICBIR durum tasinmaz -- her cagri sadece BU karenin kendi
+    tespitinden hesaplar, kilitli/donmus kutu yoktur. arac_kutusu bu karede None ise (arac
+    goruntude degilse) ya da ROI icinde kimse bulunamazsa None doner."""
+    if arac_kutusu is None:
+        return None
+    H, W = frame.shape[:2]
+    ax1, ay1, ax2, ay2 = [int(v) for v in arac_kutusu]
+    aw, ah = ax2-ax1, ay2-ay1
+    pad_x, pad_y = int(aw*0.05), int(ah*0.05)
+    rx1, ry1 = max(0, ax1-pad_x), max(0, ay1-pad_y)
+    rx2, ry2 = min(W, ax2+pad_x), min(H, ay2+pad_y)
+    arac_roi = frame[ry1:ry2, rx1:rx2]
+    if arac_roi.size == 0:
+        return None
+    arac_orta_roi = ((ax1-rx1) + (ax2-rx1)) / 2
+
+    sonuc = yolcu_model_sofor(arac_roi, conf=YOLCU_KISI_ESIK, verbose=False)[0]
+    adaylar = []
     for k in sonuc.boxes:
-        sid = int(k.cls); g = float(k.conf); kutu = k.xyxy[0].tolist()
-        if sid == 0 and g >= KISI_ESIK:
-            kisiler.append((g, kutu, (kutu[2]-kutu[0])*(kutu[3]-kutu[1])))
-        elif sid in (2, 7) and g > ea:
-            ea, en_arac = g, kutu
-    secilen = None
-    if kisiler:
-        if en_arac is not None:
-            ax1, ay1, ax2, ay2 = en_arac
-            ic = [(g, k, a) for g, k, a in kisiler if ax1 <= (k[0]+k[2])/2 <= ax2 and ay1 <= (k[1]+k[3])/2 <= ay2]
-            aday = ic if ic else kisiler
-        else:
-            aday = kisiler
-        secilen = max(aday, key=lambda t: t[2])[1] if aday else None
-    if secilen is not None:
-        x1, y1, x2, y2 = [int(v) for v in secilen]
-        px, py = int((x2-x1)*0.15), int((y2-y1)*0.15)
-        x1, y1 = max(0, x1-px), max(0, y1-py); x2, y2 = min(W, x2+px), min(H, y2+py)
-    elif en_arac is not None:
-        ax1, ay1, ax2, ay2 = [int(v) for v in en_arac]; aw, ah = ax2-ax1, ay2-ay1
-        x1 = ax1+int(aw*0.45); x2 = ax2; y1 = ay1+int(ah*0.10); y2 = ay1+int(ah*0.60)
-    else:
+        kx1, ky1, kx2, ky2 = k.xyxy[0].tolist()
+        if (kx1+kx2)/2 > arac_orta_roi:
+            adaylar.append((kx1+rx1, ky1+ry1, kx2+rx1, ky2+ry1))
+    if not adaylar:
+        return None
+    return max(adaylar, key=lambda k: (k[2]-k[0])*(k[3]-k[1]))
+
+def sofor_kirp(frame, sofor_kutu_bilinen=None):
+    """Verilen sofor_kutusunu (sofor_konumu_bul'dan, bu karenin TAZE tespiti) kirpip
+    BUYUTME kati buyutur. sofor_kutu_bilinen None ise (arac veya sofor bu karede
+    bulunamadi) kirpim yapilmaz -- baska hicbir yedek/geometrik/kisi-arama mantigi yok."""
+    if sofor_kutu_bilinen is None:
         return None, 0, 0
+
+    H, W = frame.shape[:2]
+    x1, y1, x2, y2 = [int(v) for v in sofor_kutu_bilinen]
+    px, py = int((x2-x1)*0.15), int((y2-y1)*0.15)
+    x1, y1 = max(0, x1-px), max(0, y1-py); x2, y2 = min(W, x2+px), min(H, y2+py)
     kirpik = frame[y1:y2, x1:x2]
     if kirpik.size == 0: return None, 0, 0
+    kirpik = _arac_roi_parlaklik_duzelt(kirpik)
     return cv2.resize(kirpik, None, fx=BUYUTME, fy=BUYUTME, interpolation=cv2.INTER_CUBIC), x1, y1
 
 def yolo_bul(model, bolge, esik, tek_sinif0=False):
@@ -365,16 +414,25 @@ def bakinma_olc(bolge):
         if sw > 1e-3: return (kp[NOSE][0]-smid)/sw
     return None
 
-def ardisik_seg(varlik, gerek):
+def ardisik_seg(varlik, gerek, bosluk_tolerans=0):
+    """bosluk_tolerans>0 ise bir seri icinde bu kadar ardisik None'a izin verilir (seri
+    kesilmez) -- gercek olayin arasina giren tek karelik olcum gurultusunu tolere eder;
+    varsayilan 0 ile eski (kesintisiz) davranisla birebir ayni."""
     seg = []; i = 0; n = len(varlik)
     while i < n:
         if varlik[i][1] is not None:
-            j = i
-            while j+1 < n and varlik[j+1][1] is not None: j += 1
-            if (j-i+1) >= gerek:
-                tepe = max(varlik[k][1] for k in range(i, j+1))
+            j = son_dolu = i; ardisik_bosluk = 0
+            while j+1 < n:
+                if varlik[j+1][1] is not None:
+                    j += 1; son_dolu = j; ardisik_bosluk = 0
+                elif ardisik_bosluk < bosluk_tolerans:
+                    j += 1; ardisik_bosluk += 1
+                else:
+                    break
+            if (son_dolu-i+1) >= gerek:
+                tepe = max(varlik[k][1] for k in range(i, son_dolu+1) if varlik[k][1] is not None)
                 seg.append((varlik[i][0], tepe))
-            i = j+1
+            i = son_dolu+1
         else: i += 1
     return seg
 
@@ -408,6 +466,32 @@ def bakinma_seg(off_kayit, dt):
             if sure >= T_ARKAYA: out.append(("arkaya_bakma", orta, sure))
             elif sure >= T_ETRAFA_MIN: out.append(("etrafa_bakinma", orta, sure))
             i = j+1
+        else: i += 1
+    return out
+
+def yuz_kayip_seg(yuz_kayit, dt, sure_esik, bosluk_tolerans_kare):
+    """Mediapipe'in soforun yuzunu ARDISIK olarak bulamadigi (bosluk toleransli, esneme'deki
+    ESNEME_BOSLUK_TOLERANS ile ayni mantik) sureyi olcer -- pose modelinin (bakinma_olc)
+    burun gormedigi icin None dondugu tam da bu anlarda bile calisir, dolayisiyla gercek
+    "arkaya donme" icin bakinma_seg'den daha guvenilirdir. Tek karelik "yuz bulundu"
+    titremeleri seriyi bozmaz. sure_esik'i asan seriler (orta_sn, sure) olarak dondurulur."""
+    veri = [(sn, bulundu) for sn, bulundu in yuz_kayit if bulundu is not None]
+    out = []; i = 0; n = len(veri)
+    while i < n:
+        if not veri[i][1]:
+            j = son_dolu = i; ardisik_bosluk = 0
+            while j+1 < n:
+                if not veri[j+1][1]:
+                    j += 1; son_dolu = j; ardisik_bosluk = 0
+                elif ardisik_bosluk < bosluk_tolerans_kare:
+                    j += 1; ardisik_bosluk += 1
+                else:
+                    break
+            sure = (veri[son_dolu][0]-veri[i][0]) + dt
+            if sure >= sure_esik:
+                orta = (veri[i][0]+veri[son_dolu][0])/2
+                out.append((orta, sure))
+            i = son_dolu+1
         else: i += 1
     return out
 
@@ -448,17 +532,31 @@ def _iou(a, b):
     return kesisim / max(alan, 1e-6)
 
 # --- SIGARA ---
-def sigara_surucu_bolgesi(frame, arac):
-    """(kutu, yontem) -- once poz_s ile arac icinde kisi aranir (hassas kirpim),
-    bulunamazsa on cam geometrisi (soldan direksiyon, onden bakis -> sofor sagda)."""
+def sigara_surucu_bolgesi(frame, arac, sofor_kutu_bilinen=None):
+    """(kutu, yontem) -- sofor_kutu_bilinen varsa (yolcu_model'den) dogrudan onu kullanir
+    (kendi poz_s aramasini calistirmaz). Yoksa: once poz_s ile arac ROI'si icinde kisi
+    aranir (hassas kirpim, arama arac disina cikmaz), bulunamazsa on cam geometrisi
+    (soldan direksiyon, onden bakis -> sofor sagda)."""
     ax1, ay1, ax2, ay2 = arac
     aw, ah = ax2-ax1, ay2-ay1
-    r = poz_s(frame, conf=0.25, verbose=False)[0]
-    for b in r.boxes:
-        x1, y1, x2, y2 = [float(v) for v in b.xyxy[0]]
-        if x1 >= ax1 - aw*0.1 and x2 <= ax2 + aw*0.1 and y1 >= ay1 - ah*0.1:
-            pay_x, pay_y = (x2-x1)*0.35, (y2-y1)*0.30
-            return [x1-pay_x, y1-pay_y, x2+pay_x, y2+pay_y*0.5], "poz"
+    if sofor_kutu_bilinen is not None:
+        x1, y1, x2, y2 = sofor_kutu_bilinen
+        pay_x, pay_y = (x2-x1)*0.35, (y2-y1)*0.30
+        return [x1-pay_x, y1-pay_y, x2+pay_x, y2+pay_y*0.5], "yolcu_model"
+
+    H, W = frame.shape[:2]
+    pad_x, pad_y = int(aw*0.10), int(ah*0.10)
+    rx1, ry1 = max(0, int(ax1-pad_x)), max(0, int(ay1-pad_y))
+    rx2, ry2 = min(W, int(ax2+pad_x)), min(H, int(ay2+pad_y))
+    arac_roi = frame[ry1:ry2, rx1:rx2]
+    if arac_roi.size > 0:
+        r = poz_s(arac_roi, conf=0.25, verbose=False)[0]
+        for b in r.boxes:
+            x1, y1, x2, y2 = [float(v) for v in b.xyxy[0]]
+            x1, x2 = x1+rx1, x2+rx1; y1, y2 = y1+ry1, y2+ry1
+            if x1 >= ax1 - aw*0.1 and x2 <= ax2 + aw*0.1 and y1 >= ay1 - ah*0.1:
+                pay_x, pay_y = (x2-x1)*0.35, (y2-y1)*0.30
+                return [x1-pay_x, y1-pay_y, x2+pay_x, y2+pay_y*0.5], "poz"
     return [ax1+aw*0.28, ay1+ah*0.03, ax2-aw*0.03, ay1+ah*0.50], "geometri"
 
 def sigara_kirpimda_ara(frame, bolge):
@@ -478,12 +576,12 @@ def sigara_kirpimda_ara(frame, bolge):
     mutlak = [x1+bx[0], y1+bx[1], x1+bx[2], y1+bx[3]]
     return c, mutlak, kb
 
-def sigara_isle(frame, en_arac, kare_alani):
+def sigara_isle(frame, en_arac, kare_alani, sofor_kutu_bilinen=None):
     """Bir kare icin (agirlik, conf) dondurur. en_arac None -> (0.0, 0.0) (K1)."""
     if en_arac is None:
         return 0.0, 0.0
     arac_orani = ((en_arac[2]-en_arac[0]) * (en_arac[3]-en_arac[1])) / kare_alani
-    bolge, _ = sigara_surucu_bolgesi(frame, en_arac)
+    bolge, _ = sigara_surucu_bolgesi(frame, en_arac, sofor_kutu_bilinen)
     conf, kutu, kb = sigara_kirpimda_ara(frame, bolge)
     if conf < SIGARA_ZAYIF_CONF:
         return 0.0, conf
@@ -583,29 +681,42 @@ def telefon_poz_bul(buyuk, ofs, z):
         adaylar.append((puan, _Poz(geri(bx), kp)))
     return max(adaylar, key=lambda a: a[0])[1]
 
-def telefon_kirpimda_ara(frame, arac):
+def telefon_kirpimda_ara(frame, arac, sofor_kutu_bilinen=None):
     """IKI GECISLI kirpim: 1) arac ust yarisi -> poz bul, 2) sofor etrafi dar
-    kirpilip telefon modeline verilir. Doner: (conf, kutu, kirpim_kisa_kenar,
-    poz, yontem, bolge)."""
-    genis = telefon_kabin_bolgesi(arac)
-    k1, ofs1 = _sigtel_kirp(frame, genis)
-    if k1 is None:
-        return 0.0, None, 0, None, "gecersiz", genis
-    b1, z1, _ = telefon_hazirla(k1)
-    poz = telefon_poz_bul(b1, ofs1, z1)
-
-    if poz is not None:
-        x1, y1, x2, y2 = poz.kutu
+    kirpilip telefon modeline verilir. sofor_kutu_bilinen varsa (yolcu_model'den)
+    1. gecis (genis kabin taramasi) atlanir, dogrudan bilinen kutunun etrafi kirpilir --
+    keypoint'ler (K8/K9/K10 icin) yine de bu dar kirpim uzerinden cikarilir.
+    Doner: (conf, kutu, kirpim_kisa_kenar, poz, yontem, bolge)."""
+    if sofor_kutu_bilinen is not None:
+        x1, y1, x2, y2 = sofor_kutu_bilinen
         px, py = (x2-x1)*0.40, (y2-y1)*0.35
-        bolge, yontem = [x1-px, y1-py, x2+px, y2+py*0.6], "poz"
+        bolge, yontem = [x1-px, y1-py, x2+px, y2+py*0.6], "yolcu_model"
+        k2, ofs2 = _sigtel_kirp(frame, bolge)
+        if k2 is None:
+            return 0.0, None, 0, None, yontem, bolge
+        kb = min(k2.shape[0], k2.shape[1])
+        b2, z2, _ = telefon_hazirla(k2)
+        poz = telefon_poz_bul(b2, ofs2, z2)
     else:
-        bolge, yontem = telefon_on_cam_bolgesi(arac), "geometri"
+        genis = telefon_kabin_bolgesi(arac)
+        k1, ofs1 = _sigtel_kirp(frame, genis)
+        if k1 is None:
+            return 0.0, None, 0, None, "gecersiz", genis
+        b1, z1, _ = telefon_hazirla(k1)
+        poz = telefon_poz_bul(b1, ofs1, z1)
 
-    k2, ofs2 = _sigtel_kirp(frame, bolge)
-    if k2 is None:
-        return 0.0, None, 0, poz, yontem, bolge
-    kb = min(k2.shape[0], k2.shape[1])
-    b2, z2, _ = telefon_hazirla(k2)
+        if poz is not None:
+            x1, y1, x2, y2 = poz.kutu
+            px, py = (x2-x1)*0.40, (y2-y1)*0.35
+            bolge, yontem = [x1-px, y1-py, x2+px, y2+py*0.6], "poz"
+        else:
+            bolge, yontem = telefon_on_cam_bolgesi(arac), "geometri"
+
+        k2, ofs2 = _sigtel_kirp(frame, bolge)
+        if k2 is None:
+            return 0.0, None, 0, poz, yontem, bolge
+        kb = min(k2.shape[0], k2.shape[1])
+        b2, z2, _ = telefon_hazirla(k2)
 
     conf, kutu = 0.0, None
     rt = telefon_model(b2, conf=TELEFON_ZAYIF_CONF, verbose=False)[0]
@@ -726,12 +837,12 @@ def telefon_agirlik(conf, kirpim_boyu, arac_orani, kutu, bolge, pk, onceki_kutu)
 
     return min(a, conf * 1.6), alt
 
-def telefon_isle(frame, en_arac, kare_alani, onceki_kutu):
+def telefon_isle(frame, en_arac, kare_alani, onceki_kutu, sofor_kutu_bilinen=None):
     """Bir kare icin (agirlik, conf, alt_etiket, kutu) dondurur."""
     if en_arac is None:
         return 0.0, 0.0, None, None
     arac_orani = ((en_arac[2]-en_arac[0]) * (en_arac[3]-en_arac[1])) / kare_alani
-    conf, kutu, kb, poz, yontem, bolge = telefon_kirpimda_ara(frame, en_arac)
+    conf, kutu, kb, poz, yontem, bolge = telefon_kirpimda_ara(frame, en_arac, sofor_kutu_bilinen)
     pk = telefon_poz_kontrolu(poz, kutu, bolge)
     a, alt = telefon_agirlik(conf, kb, arac_orani, kutu, bolge, pk, onceki_kutu)
     return a, conf, alt, kutu
@@ -750,21 +861,15 @@ def run_inference(video_path):
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps <= 0: fps = 30.0
-    
-    global_frame_count = 0
 
-    # Görselleştirme videosu (kutu çizilmiş çıktı) yalnızca yerel hata ayıklama
-    # içindir: DEBUG_VIDEO=1 ile açılır. Yarışma koşusunda kapalıdır — her kareyi
-    # yeniden kodlamak süre ve disk harcar, girdi klasörü de salt-okunur mount
-    # edilebilir. Bu bir ortam TESPİTİ değil, açıkça verilen bir hata ayıklama
-    # anahtarıdır; varsayılan davranış her yerde aynıdır.
-    out_video = None
-    if os.environ.get("DEBUG_VIDEO") == "1":
-        out_video = cv2.VideoWriter(
-            os.path.join(os.path.dirname(video_path), "PREDICT_GERCEK_Cikti.mp4"),
-            cv2.VideoWriter_fourcc(*'mp4v'), fps,
-            (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        )
+    global_frame_count = 0
+    
+    # --- VİDEO ÇIKTI ALTYAPISI (Kullanıcının isteği üzerine predict.py'ye eklendi) ---
+    out_video = cv2.VideoWriter(
+        os.path.join(os.path.dirname(video_path), "PREDICT_GERCEK_Cikti.mp4"),
+        cv2.VideoWriter_fourcc(*'mp4v'), fps,
+        (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    )
     son_su_kutu = None
     son_su_g = 0.0
     son_su_zamani = -999
@@ -781,29 +886,23 @@ def run_inference(video_path):
     vehicle_trajectories = {}
     slalom_detected_vehicles = set()
     slalom_memory = {}
-    teknocan_memory = {}
-    finalized_teknocans = set()
-    laptop_memory = {}
-    finalized_laptops = set()
-    
+
     atlama = 1
     atlama_yolcu = max(1, int(round(fps/2)))
     dt = atlama/fps
     yolo_kayit = {ad: [] for ad in modeller}
-    mar_kayit = []  # hibrit esneme: son ~5 saniyelik ham MAR (agiz aciklik) gecmisi
-    MAR_PENCERE = max(10, round(5 / dt))
     off_kayit = []
+    yuz_kayit = []  # (sn, mediapipe yuz buldu mu) -- arkaya_bakma yukseltmesi icin
     surucu_var_kayit = []
-    
+
     # YOLCU: ID takipli (BoT-SORT) surekli-kimlik durumu -- test_yolcu.py ile ayni
     yolcu_sofor_id = None
     yolcu_sofor_son_konum = None
-    yolcu_id_role = {}          # track_id -> koltuk ("on_koltuk" | "arka_koltuk_1" | "arka_koltuk_2")
+    yolcu_id_role = {}          # track_id -> koltuk ("on_koltuk" -- sofor disindaki herkes)
     yolcu_ardisik_sayac = {}    # track_id -> kesintisiz (islenen kare bazinda) gorulme sayaci
     yolcu_ardisik_son_kare = {} # track_id -> en son goruldugu islenen-kare sirasi
-    yolcu_kilitli_roller = set()  # bir koltuk bir kez JSON'a yazildi mi (video basina en fazla 1)
+    yolcu_kilitli_idler = set()  # bu ID zaten JSON'a yazildi mi (ayni kisi tekrar tekrar yazilmaz, ama yeni bir kisi -- yeni ID -- yeniden yazilabilir)
     yolcu_islenen_kare_sirasi = 0
-
     # SIGARA + TELEFON: zamansal kanit birikimi durumu (K6/K7/K12/K15)
     sigara_pencere = deque()       # (sn, agirlik)
     sigara_son_olay = -99.0
@@ -811,65 +910,122 @@ def run_inference(video_path):
     telefon_son_olay = -99.0
     telefon_onceki_kutu = None
 
+    # KEMER: pencere/tetikleyici YOK -- soför ROI'si bulundugu her karede dogrudan kontrol
+    # edilir. "Kemer var" gorulurse durum sifirlanir (bir sonraki "yok" tekrar yazilabilir).
+    # "Kemer yok" gorulurse -- en son "var" gorulduğunden beri zaten yazilmadiysa -- ANINDA
+    # ihlal yazilir (ayni surekli "yok" durumunda tekrar tekrar yazilmaz).
+    kemer_son_ihlal_yazildi = False
+
+    # KEMER BELIRSIZLIK KONTROLU: arac kutusu SOL ya da SAG kenara YENI dayandiginda
+    # (once dayanmamisken simdi dayaniyorsa) acilan 3 saniyelik kenar-tetikleyicili bir
+    # pencere kullanilir -- pencere boyunca kemer modeli bir kez bile "var" ya da "yok"
+    # diyemediyse (tamamen belirsiz kaldiysa), pencere kapaninca BASLANGIC anina ihlal
+    # yazilir. Pencere her acildiginda sifirlanir.
+    onceki_kenar_dayali = False
+    KEMER_PENCERE_SN = 3.0  # belirsizlik kontrol penceresinin acik kalacagi sure (sn)
+    KEMER_KENAR_ESIK = int((cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1606) * 0.05)  # kenara "yakin" sayilacak piksel payi
+    belirsizlik_pencere_acik = False
+    belirsizlik_pencere_baslangic = 0.0
+    kemer_pencerede_karar_verildi = False
+
+    # ARKA KOLTUK (pencere-tabanli): ayni kenar-tetikleyicili pencereyi kullanir -- pencere
+    # aciksa roi'nin SAG tarafinda yolcu_model ile kisi aranir (sofor'la cakisan elenir).
+    # Bos olan ilk yer (once arka_koltuk_1, sonra arka_koltuk_2) doldurulur (FTR sartnamesi
+    # sadece bu iki etiketi taniyor). HER IKI yer de ARKA_KOLTUK_SIFIRLAMA_SN'de bir
+    # bosaltilir -- boylece koltuk degisikligi (inen/binen farkli kisi) tekrar yakalanabilir.
+    arka_koltuk_pencerede_yazildi = False
+    arka_koltuk_1_dolu = False
+    arka_koltuk_2_dolu = False
+    arka_koltuk_son_sifirlama = 0.0
+    ARKA_KOLTUK_SIFIRLAMA_SN = 6.0
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
         global_frame_count += 1
-        is_processed_frame = (global_frame_count % atlama == 0)
-        
+
         # --- CAR BOXES PASS ---
-        detector_results = detector_model.track(frame, classes=[2, 7, 63], conf=0.45, persist=True, verbose=False)
+        detector_results = detector_model.track(frame, classes=[2, 5, 7], conf=0.45, persist=True, verbose=False)
         current_car_boxes = []
         for result in detector_results:
             for box in result.boxes:
-                if int(box.cls[0].item()) in [2, 7]:
+                if int(box.cls[0].item()) in [2, 5, 7]:
                     current_car_boxes.append(tuple(map(int, box.xyxy[0])))
+        en_buyuk = max(current_car_boxes, key=lambda b: (b[2]-b[0])*(b[3]-b[1])) if current_car_boxes else None
+
+        t_simdi = global_frame_count / fps
+
+        if t_simdi - arka_koltuk_son_sifirlama >= ARKA_KOLTUK_SIFIRLAMA_SN:
+            arka_koltuk_1_dolu = False
+            arka_koltuk_2_dolu = False
+            arka_koltuk_son_sifirlama = t_simdi
+
+        # Arac kutusu SOL ya da SAG kenara YENI dayandiginda (once dayanmamisken simdi
+        # dayaniyorsa) 3 saniyelik "iyi gorunum" penceresi acilir. Pencere ACIKKEN arac
+        # bir-iki kare icin kaybolsa bile pencere KAPANMAZ -- sadece 3 saniye dolunca kapanir.
+        # Pencere zaten aciksa yeni bir "kenara degme" onu yeniden baslatmaz.
+        if en_buyuk is not None:
+            kenar_dayali_mi = en_buyuk[0] <= KEMER_KENAR_ESIK or en_buyuk[2] >= frame.shape[1] - KEMER_KENAR_ESIK
+            if kenar_dayali_mi and not onceki_kenar_dayali and not belirsizlik_pencere_acik:
+                belirsizlik_pencere_acik = True
+                belirsizlik_pencere_baslangic = t_simdi
+                kemer_pencerede_karar_verildi = False  # yeni pencere -- kemer belirsizligi de sifirlanir
+                arka_koltuk_pencerede_yazildi = False  # yeni pencere -- arka koltuk tekrar aranabilir
+            onceki_kenar_dayali = kenar_dayali_mi
+        else:
+            onceki_kenar_dayali = False
+
+        if belirsizlik_pencere_acik and (t_simdi - belirsizlik_pencere_baslangic > KEMER_PENCERE_SN):
+            if not kemer_pencerede_karar_verildi:
+                vehicle_events.append(tespit_olustur(belirsizlik_pencere_baslangic, "sofor_eylemi", "emniyet_kemeri_ihlali", 0.5))
+            belirsizlik_pencere_acik = False
+
+        belirsizlik_pencere_gorunum = belirsizlik_pencere_acik and en_buyuk is not None
+
+        # TEKNOCAN + LAPTOP: SADECE araç içinde sayılır (araç dışında görülenler
+        # değerlendirilmez). ID/hafıza takibi yok -- her karede eşiği geçen ve araç
+        # içinde olan tespit dogrudan o karenin zamanıyla yazılır; aynı nesnenin arka
+        # arkaya defalarca yazılmasını sondaki genel 5sn'lik soğuma filtresi zaten
+        # engelliyor, ayrıca bir "N kere görüldü" hafızasına gerek yok.
+        def _arac_icinde_mi(cx, cy):
+            return any(c[0] <= cx <= c[2] and c[1] <= cy <= c[3] for c in current_car_boxes)
 
         # --- 1. TEKNOCAN ---
         if global_frame_count % 2 == 0:
-            teknocan_results = teknocan_model.track(frame, conf=0.6, persist=True, verbose=False)
+            teknocan_results = teknocan_model(frame, conf=0.6, verbose=False)
             for t_res in teknocan_results:
                 for t_box in t_res.boxes:
-                    if t_box.id is None: continue
-                    t_id = int(t_box.id.item())
                     conf = float(t_box.conf[0])
-                    if t_id not in finalized_teknocans:
-                        teknocan_memory[t_id] = teknocan_memory.get(t_id, 0) + 1
-                        if teknocan_memory[t_id] == 10:
-                            zaman_saniye = global_frame_count / fps
-                            tx1, ty1, tx2, ty2 = map(int, t_box.xyxy[0])
-                            cx, cy = (tx1+tx2)/2, (ty1+ty2)/2
-                            is_inside = any(c[0] <= cx <= c[2] and c[1] <= cy <= c[3] for c in current_car_boxes)
-                            lbl = "teknocan_ici" if is_inside else "teknocan_disi"
-                            vehicle_events.append(tespit_olustur(zaman_saniye, "nesneler", lbl, conf))
-                            finalized_teknocans.add(t_id)
-                        elif teknocan_memory[t_id] > 10:
-                            finalized_teknocans.add(t_id)
-        
-        # --- 2. LAPTOP (bilgisayar) ve ARAÇ ---
+                    tx1, ty1, tx2, ty2 = map(int, t_box.xyxy[0])
+                    if _arac_icinde_mi((tx1+tx2)/2, (ty1+ty2)/2):
+                        zaman_saniye = global_frame_count / fps
+                        vehicle_events.append(tespit_olustur(zaman_saniye, "nesneler", "teknocan", conf))
+
+        # --- 2. LAPTOP (bilgisayar) --- araba ROI'sine kirpilip CLAHE ile parlaklik
+        # duzeltmesi uygulanarak (digerleri gibi) taranır.
+        if en_buyuk is not None:
+            lax1, lay1, lax2, lay2 = en_buyuk
+            lpad_x, lpad_y = int((lax2-lax1)*0.05), int((lay2-lay1)*0.05)
+            lrx1, lry1 = max(0, lax1-lpad_x), max(0, lay1-lpad_y)
+            lrx2, lry2 = min(frame.shape[1], lax2+lpad_x), min(frame.shape[0], lay2+lpad_y)
+            laptop_roi = frame[lry1:lry2, lrx1:lrx2]
+            if laptop_roi.size > 0:
+                laptop_roi = _arac_roi_parlaklik_duzelt(laptop_roi)
+                laptop_sonuc = laptop_model(laptop_roi, conf=0.45, verbose=False)[0]
+                for l_box in laptop_sonuc.boxes:
+                    conf = float(l_box.conf[0])
+                    zaman_saniye = global_frame_count / fps
+                    vehicle_events.append(tespit_olustur(zaman_saniye, "nesneler", "bilgisayar", conf))
+
+        # --- 3. ARAÇ (kasa/renk/plaka) ---
         for result in detector_results:
             for box in result.boxes:
                 if box.id is None: continue
                 v_id = int(box.id.item())
-                class_id = int(box.cls[0].item())
                 ax1, ay1, ax2, ay2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
-                
-                if class_id == 63:
-                    if v_id not in finalized_laptops:
-                        laptop_memory[v_id] = laptop_memory.get(v_id, 0) + 1
-                        if laptop_memory[v_id] == 5:
-                            zaman_saniye = global_frame_count / fps
-                            cx, cy = (ax1+ax2)/2, (ay1+ay2)/2
-                            is_inside = any(c[0] <= cx <= c[2] and c[1] <= cy <= c[3] for c in current_car_boxes)
-                            lbl = "bilgisayar_ici" if is_inside else "bilgisayar_disi"
-                            vehicle_events.append(tespit_olustur(zaman_saniye, "nesneler", lbl, conf))
-                            finalized_laptops.add(v_id)
-                        elif laptop_memory[v_id] > 5:
-                            finalized_laptops.add(v_id)
-                    continue
-                    
+
                 vehicle_id = v_id
                 w_vehicle = ax2 - ax1 
                 h_vehicle = ay2 - ay1 
@@ -978,25 +1134,39 @@ def run_inference(video_path):
         # --- 3. ŞOFÖR EYLEMLERİ (predict.py) ---
         if global_frame_count % atlama == 0:
             sn = round(global_frame_count/fps, 1)
-            bolge, kirp_x1, kirp_y1 = sofor_kirp(frame)
+            # ARAC KENARDA KIRPILMIS MI: araci kismen kadraj disinda birakan donus/manevra
+            # anlarinda "sofor sagda" geometrik varsayimi ve kirpim guvenilmez hale geliyor --
+            # bu durumda o karede sofor/sigara/telefon tespiti atlanir.
+            guvenilir_arac = en_buyuk
+            if en_buyuk is not None:
+                ax1, _, ax2, _ = en_buyuk
+                if ax1 <= ARAC_KENAR_PAY or ax2 >= frame.shape[1] - ARAC_KENAR_PAY:
+                    guvenilir_arac = None
+
+            # HER KEREDE TAZE: sofor konumu bu karenin kendi arac ROI'sinden yeniden
+            # hesaplanir -- gecmis kareden/donmus bir kutudan hicbir sey tasinmaz. Arac bu
+            # karede goruntude degilse/kenarda kirpilmisse ya da ROI icinde kimse bulunamazsa
+            # None doner.
+            sofor_kutusu = sofor_konumu_bul(frame, guvenilir_arac)
+            bolge, kirp_x1, kirp_y1 = sofor_kirp(frame, sofor_kutusu)
             surucu_var_kayit.append((sn, bolge is not None))
-            
+
             # Kemer modeli için sadece arabayı kırp (En büyük arabayı al)
             araba_crop = frame
-            if current_car_boxes:
-                en_buyuk = max(current_car_boxes, key=lambda b: (b[2]-b[0])*(b[3]-b[1]))
+            if en_buyuk is not None:
                 ax1, ay1, ax2, ay2 = en_buyuk
                 pad_x, pad_y = int((ax2-ax1)*0.05), int((ay2-ay1)*0.05)
                 p_ax1, p_ay1 = max(0, ax1 - pad_x), max(0, ay1 - pad_y)
                 p_ax2, p_ay2 = min(frame.shape[1], ax2 + pad_x), min(frame.shape[0], ay2 + pad_y)
                 araba_crop = frame[p_ay1:p_ay2, p_ax1:p_ax2]
 
-            # --- SIGARA + TELEFON (Masaustu/Models K1-K16 mantigi) -- kendi arac/poz
-            # bolgesini bagimsiz bulur, sofor_kirp()'in bolge'sine ihtiyac duymaz. ---
-            en_arac_sigtel = en_buyuk if current_car_boxes else None
+            # --- SIGARA + TELEFON (Masaustu/Models K1-K16 mantigi) -- artik bu karenin taze
+            # sofor_kutusu'nu kullanir, kendi baslarina "sofor kim" aramazlar (bulunamadiysa
+            # kendi eski yedek mantiklarina duserler). ---
+            en_arac_sigtel = guvenilir_arac
             kare_alani = frame.shape[0] * frame.shape[1]
 
-            sig_a, sig_conf = sigara_isle(frame, en_arac_sigtel, kare_alani)
+            sig_a, sig_conf = sigara_isle(frame, en_arac_sigtel, kare_alani, sofor_kutusu)
             if sig_a > 0:
                 sigara_pencere.append((sn, sig_a))
             while sigara_pencere and sn - sigara_pencere[0][0] > SIGTEL_PENCERE_SN:
@@ -1009,7 +1179,7 @@ def run_inference(video_path):
                 sigara_son_olay = sn
                 sigara_pencere.clear()
 
-            tel_a, tel_conf, tel_alt, tel_kutu = telefon_isle(frame, en_arac_sigtel, kare_alani, telefon_onceki_kutu)
+            tel_a, tel_conf, tel_alt, tel_kutu = telefon_isle(frame, en_arac_sigtel, kare_alani, telefon_onceki_kutu, sofor_kutusu)
             telefon_onceki_kutu = tel_kutu if tel_a > 0 else None
             if tel_a > 0:
                 telefon_pencere.append((sn, tel_a, tel_alt, tel_conf))
@@ -1026,26 +1196,94 @@ def run_inference(video_path):
                 telefon_son_olay = sn
                 telefon_pencere.clear()
 
+            # KEMER: soför ROI'sine (sofor_kutusu) %15 padding ile bakar -- arac ROI'si
+            # DEGIL. Pencere/tetikleyici yok, soför bulundugu her karede dogrudan kontrol
+            # edilir. "Kemer var" gorulurse durum sifirlanir (sessiz -- ihlal yazilmaz).
+            # "Kemer yok" gorulurse -- en son "var" gorulduğunden beri zaten yazilmadiysa --
+            # ANINDA ihlal yazilir (surekli "yok" durumunda tekrar tekrar yazilmaz).
+            if sofor_kutusu is not None:
+                sfx1, sfy1, sfx2, sfy2 = sofor_kutusu
+                sfpad_x, sfpad_y = (sfx2-sfx1)*0.15, (sfy2-sfy1)*0.15
+                sfrx1, sfry1 = max(0, int(sfx1-sfpad_x)), max(0, int(sfy1-sfpad_y))
+                sfrx2, sfry2 = min(frame.shape[1], int(sfx2+sfpad_x)), min(frame.shape[0], int(sfy2+sfpad_y))
+                sofor_roi_kemer = frame[sfry1:sfry2, sfrx1:sfrx2]
+                if sofor_roi_kemer.size > 0:
+                    sofor_roi_kemer = _arac_roi_parlaklik_duzelt(sofor_roi_kemer)
+                    res = modeller["kemer"](sofor_roi_kemer, conf=ESIK["kemer"], verbose=False)[0]
+                    b_cls, b_conf = -1, 0.0
+                    for k in res.boxes:
+                        if float(k.conf) > b_conf:
+                            b_conf, b_cls = float(k.conf), int(k.cls)
+                    if b_cls in (0, 1) and belirsizlik_pencere_gorunum:
+                        # pencere SU AN acikken verilen karar sayilir -- pencere disindaki
+                        # (kesintisiz calisan) tespitler bu sayaci etkilemez
+                        kemer_pencerede_karar_verildi = True
+                    if b_cls == 1:
+                        kemer_son_ihlal_yazildi = False
+                    elif b_cls == 0 and not kemer_son_ihlal_yazildi:
+                        vehicle_events.append(tespit_olustur(sn, "sofor_eylemi", "emniyet_kemeri_ihlali", round(b_conf, 2)))
+                        kemer_son_ihlal_yazildi = True
+
+            # ARKA KOLTUK (pencere-tabanli): arac ROI'si (5% padding) + CLAHE -- kenar-
+            # tetikleyicili belirsizlik penceresini kullanir. Kirpimin SAG yarisinda kisi
+            # aranir, sofor_kutusu ile cakisan (IOU) adaylar elenir. Bos olan ilk yer
+            # (once arka_koltuk_1, sonra arka_koltuk_2) doldurulur.
+            if en_buyuk is not None and belirsizlik_pencere_gorunum and not arka_koltuk_pencerede_yazildi and not (arka_koltuk_1_dolu and arka_koltuk_2_dolu):
+                kax1, kay1, kax2, kay2 = en_buyuk
+                kpad_x, kpad_y = int((kax2-kax1)*0.05), int((kay2-kay1)*0.05)
+                krx1, kry1 = max(0, kax1-kpad_x), max(0, kay1-kpad_y)
+                krx2, kry2 = min(frame.shape[1], kax2+kpad_x), min(frame.shape[0], kay2+kpad_y)
+                arac_roi_koltuk = frame[kry1:kry2, krx1:krx2]
+                if arac_roi_koltuk.size > 0:
+                    arac_roi_koltuk = _arac_roi_parlaklik_duzelt(arac_roi_koltuk)
+                    krx_orta = krx1 + (krx2 - krx1) // 2
+                    sag_roi = arac_roi_koltuk[:, krx_orta-krx1:]
+                    if sag_roi.size > 0:
+                        ay_sonuc = yolcu_model(sag_roi, conf=YOLCU_KISI_ESIK, verbose=False)[0]
+
+                        def _sofor_ile_cakisiyor_mu(kutu):
+                            if sofor_kutusu is None:
+                                return False
+                            x1, y1, x2, y2 = kutu
+                            sx1, sy1, sx2, sy2 = sofor_kutusu
+                            ix1, iy1 = max(x1, sx1), max(y1, sy1)
+                            ix2, iy2 = min(x2, sx2), min(y2, sy2)
+                            iw, ih = max(0, ix2-ix1), max(0, iy2-iy1)
+                            alan = (x2-x1)*(y2-y1)
+                            oran = (iw*ih)/alan if alan > 0 else 0.0
+                            return oran >= 0.3
+
+                        adaylar = []
+                        for k in ay_sonuc.boxes:
+                            kx1, ky1, kx2, ky2 = k.xyxy[0].tolist()
+                            tam_kutu = (kx1+krx_orta, ky1+kry1, kx2+krx_orta, ky2+kry1)
+                            if not _sofor_ile_cakisiyor_mu(tam_kutu):
+                                adaylar.append(float(k.conf))
+
+                        if adaylar:
+                            if not arka_koltuk_1_dolu:
+                                koltuk_etiketi = "arka_koltuk_1"
+                                arka_koltuk_1_dolu = True
+                            else:
+                                koltuk_etiketi = "arka_koltuk_2"
+                                arka_koltuk_2_dolu = True
+                            vehicle_events.append(tespit_olustur(sn, "yolcular", koltuk_etiketi, max(adaylar)))
+                            arka_koltuk_pencerede_yazildi = True
+
             if bolge is None:
                 for ad in modeller:
-                    if ad == "kemer": yolo_kayit[ad].append(None)
-                    else: yolo_kayit[ad].append((sn, None))
+                    if ad != "kemer": yolo_kayit[ad].append((sn, None))
                 off_kayit.append((sn, None))
+                yuz_kayit.append((sn, None))
             else:
                 rgb = cv2.cvtColor(bolge, cv2.COLOR_BGR2RGB)
                 mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                 yuz_sonuc = yuz_dedektor.detect(mp_img)
+                yuz_kayit.append((sn, bool(yuz_sonuc and yuz_sonuc.face_landmarks)))
 
                 for ad, model in modeller.items():
                     if ad == "kemer":
-                        # Kemer modelini doğrudan şoför bölgesine (bolge) odaklayarak çalıştırıyoruz
-                        res = model(bolge, conf=ESIK[ad], verbose=False)[0]
-                        b_cls, b_conf = -1, 0.0
-                        for k in res.boxes:
-                            if float(k.conf) > b_conf:
-                                b_conf, b_cls = float(k.conf), int(k.cls)
-                        if b_cls != -1: yolo_kayit[ad].append((sn, b_cls, b_conf))
-                        else: yolo_kayit[ad].append(None)
+                        continue  # yukarida arac ROI'sinde ayrica islendi
                     elif ad == "su":
                         g, kutu = su_bul(model, bolge, ESIK[ad], yuz_sonuc)
                         yolo_kayit[ad].append((sn, g if g>0 else None))
@@ -1061,10 +1299,12 @@ def run_inference(video_path):
                             son_su_g = g
                             son_su_zamani = global_frame_count
                     elif ad == "esneme":
-                        # HİBRİT KONTROL (test_esneme_hibrit.py mantığı): MAR (agiz aciklik
-                        # orani, kisinin kendi son ~5sn'lik normaline gore) VEYA YOLO -- ikisinden
+                        # HİBRİT KONTROL: MAR (agiz aciklik mesafesi) VEYA YOLO -- ikisinden
                         # biri onaylarsa esneme sayilir (el agzi kapatirsa MAR calismaz ama YOLO
-                        # yine de yakalayabilir; YOLO kacirirsa MAR yakalayabilir).
+                        # yine de yakalayabilir; YOLO kacirirsa MAR yakalayabilir). AMA yuz
+                        # gorunuyor ve agiz kesinlikle kapaliysa (MAR_MIN_ACIKLIK altinda) bu,
+                        # YOLO'nun kararini VETO eder -- agiz acik degilse esneme sayilmaz,
+                        # YOLO modeli ne derse desin.
                         g = yolo_bul(model, bolge, ESIK[ad], tek_sinif0=True)
                         yolo_onayi_var = g > 0
 
@@ -1072,15 +1312,10 @@ def run_inference(video_path):
                         if yuz_sonuc and yuz_sonuc.face_landmarks:
                             lm = yuz_sonuc.face_landmarks[0]
                             mar_degeri = abs(lm[ALT_DUDAK].y - lm[UST_DUDAK].y)
-                            mar_kayit.append(mar_degeri)
-                            if len(mar_kayit) > MAR_PENCERE:
-                                mar_kayit.pop(0)
-                            if len(mar_kayit) > 30:
-                                taban = float(np.median(mar_kayit))
-                                if taban < 1e-6: taban = 1e-6
-                                oran = mar_degeri / taban
-                                if oran >= ORAN_ESIK:
-                                    mar_onayi_var = True
+                            if mar_degeri >= MAR_MIN_ACIKLIK:
+                                mar_onayi_var = True
+                            else:
+                                yolo_onayi_var = False  # yuz var, agiz kapali -> YOLO veto
 
                         if yolo_onayi_var or mar_onayi_var:
                             esneme_g = g if yolo_onayi_var else 0.75
@@ -1088,18 +1323,18 @@ def run_inference(video_path):
                         else:
                             yolo_kayit[ad].append((sn, None))
                 off_kayit.append((sn, bakinma_olc(bolge)))
-                
+
         # --- 4. YOLCULAR (yolcu.pt + BoT-SORT ID takibi, test_yolcu.py'nin sofor
-        # cozumleme/kilitleme mantigi -- ama rol ayrimi (on_koltuk/arka_koltuk_1/
-        # arka_koltuk_2) predict.py'nin dikey-konum+boyut sezgisiyle, ID'ye kalici
-        # baglanarak. Kilitlenen (2 ardisik islenen kare) koltuk ANINDA yazilir,
-        # sofor JSON'a hic yazilmaz -- sadece sofor disi rolleri elemek icin kullanilir.) ---
+        # cozumleme/kilitleme mantigi -- sofor disindaki herkes on_koltuk sayilir, ID'ye
+        # kalici baglanarak. Bir ID 2 ardisik islenen karede gorulunce ANINDA yazilir --
+        # her ID sadece bir kez yazilir ama FARKLI bir ID (yeni bir kisi) tekrar yazilabilir,
+        # yani on_koltuk video basina 1 kezle sinirli degildir. Sofor JSON'a hic yazilmaz --
+        # sadece sofor disi rolleri elemek icin kullanilir.) ---
         if global_frame_count % atlama_yolcu == 0:
             yolcu_islenen_kare_sirasi += 1
             en_arac = max(current_car_boxes, key=lambda b: (b[2]-b[0])*(b[3]-b[1])) if current_car_boxes else None
             if en_arac is not None:
                 ax1, ay1, ax2, ay2 = en_arac
-                ah = ay2 - ay1
                 arac_orta = (ax1 + ax2) / 2
                 arac_capraz = ((ax2-ax1)**2 + (ay2-ay1)**2) ** 0.5
                 pad_x, pad_y = int((ax2-ax1)*YOLCU_ROI_PAD_ORAN), int((ay2-ay1)*YOLCU_ROI_PAD_ORAN)
@@ -1108,6 +1343,7 @@ def run_inference(video_path):
                 arac_roi = frame[ry1:ry2, rx1:rx2]
 
                 if arac_roi.size > 0:
+                    arac_roi = _arac_roi_parlaklik_duzelt(arac_roi)
                     kisi_sonuc = yolcu_model.track(arac_roi, conf=YOLCU_KISI_ESIK, persist=True, verbose=False)[0]
                     ic_kisiler = []
                     if kisi_sonuc.boxes is not None:
@@ -1160,13 +1396,7 @@ def run_inference(video_path):
                         if pid in yolcu_id_role:
                             koltuk = yolcu_id_role[pid]
                         else:
-                            sofor_alani = sofor["alan"] if sofor is not None else b["alan"]
-                            ust_oran = (b["alt_y"] - ay1) / ah if ah > 0 else 1.0
-                            kucuk = b["alan"] < sofor_alani * 0.6
-                            if ust_oran < 0.55 and kucuk:
-                                koltuk = "arka_koltuk_1" if b["merkez_x"] < arac_orta else "arka_koltuk_2"
-                            else:
-                                koltuk = "on_koltuk"
+                            koltuk = "on_koltuk"
                             yolcu_id_role[pid] = koltuk
 
                         onceki_kare = yolcu_ardisik_son_kare.get(pid)
@@ -1176,8 +1406,8 @@ def run_inference(video_path):
                             yolcu_ardisik_sayac[pid] = 1
                         yolcu_ardisik_son_kare[pid] = yolcu_islenen_kare_sirasi
 
-                        if yolcu_ardisik_sayac[pid] >= YOLCU_ARDISIK_GEREK and koltuk not in yolcu_kilitli_roller:
-                            yolcu_kilitli_roller.add(koltuk)
+                        if yolcu_ardisik_sayac[pid] >= YOLCU_ARDISIK_GEREK and pid not in yolcu_kilitli_idler:
+                            yolcu_kilitli_idler.add(pid)
                             vehicle_events.append(tespit_olustur(global_frame_count / fps, "yolcular", koltuk, b["conf"]))
 
         # VİDEO ÇİKTISI İÇİN KUTUYU ÇİZ (Atlama boşluklarında da görünmesi için)
@@ -1187,71 +1417,62 @@ def run_inference(video_path):
             cv2.putText(frame, f"ONAY: su_icme {son_su_g:.2f}", (rx1, ry1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             cv2.putText(frame, "PREDICT KILITLENDI!", (50, 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 0, 255), 2)
             
-        if out_video is not None:
-            out_video.write(frame)
+        out_video.write(frame)
 
     cap.release()
-    if out_video is not None:
-        out_video.release()
-    
+    out_video.release()
+
     # === POST-PROCESSING (Şoför Eylemleri) ===
-    # NOT: sigara/telefon artik CANLI olarak (kendi K6/K7 kanit penceresiyle) yukarida
+    # NOT: sigara/telefon/kemer artik CANLI olarak (kendi kanit pencereleriyle) yukarida
     # vehicle_events'e yazildi -- burada tekrar islenmiyor.
     etiket_map = {"su": "su_icme", "esneme": "esneme"}
+    ardisik_gerek_map = {"su": ARDISIK_GEREK, "esneme": max(ARDISIK_GEREK, round(ESNEME_ARDISIK_SN / dt))}
+    bosluk_tolerans_map = {"su": 0, "esneme": ESNEME_BOSLUK_TOLERANS}
     kararlar = []
     for ad in ["su", "esneme"]:
-        for (orta, tepe) in ardisik_seg(yolo_kayit[ad], ARDISIK_GEREK):
+        for (orta, tepe) in ardisik_seg(yolo_kayit[ad], ardisik_gerek_map[ad], bosluk_tolerans_map[ad]):
             kararlar.append((orta, "sofor_eylemi", etiket_map[ad], tepe))
 
-    # === Yeni Kemer İhlali Mantığı (Çifte Doğrulama ve Ardışık 5 Kare) ===
-    ihlal_zamani = None
-    ortalama_guven = 0.0
-    ardisik_kemer_yok = []
-    kemer_var_sayaci = 0
-    kemer_onaylandi = False
-
-    # 1. ADIM: Video (veya periyot) boyunca model en az 2 kez "Kemer Var" dedi mi?
-    for item in yolo_kayit["kemer"]:
-        if item is not None:
-            _, cls_id, _ = item
-            if cls_id == 1:  # Sınıf 1: Kemer Var
-                kemer_var_sayaci += 1
-                if kemer_var_sayaci >= 2:
-                    kemer_onaylandi = True
-                    break
-                
-    # 2. ADIM: Eğer kemer varlığı onaylanmadıysa "Kemer Yok" sayısını kontrol et
-    if not kemer_onaylandi:
-        for item in yolo_kayit["kemer"]:
-            if item is not None:
-                sn, cls_id, conf = item
-                if cls_id == 0:  # Sınıf 0: Kemer Yok
-                    ardisik_kemer_yok.append((sn, conf))
-                else:
-                    ardisik_kemer_yok = [] # Kemer Var dendiyse sayacı sıfırla
-            else:
-                ardisik_kemer_yok = [] # Şoför/kemer tespit edilemediyse sayacı sıfırla
-                
-            # 3. ADIM: 5 kareyi bulduğumuz an ihlali yaz
-            if len(ardisik_kemer_yok) >= 5:
-                ihlal_zamani = ardisik_kemer_yok[0][0] # İhlalin ilk başladığı an
-                ortalama_guven = sum(c for _, c in ardisik_kemer_yok) / len(ardisik_kemer_yok)
-                break
-                
-        if ihlal_zamani is not None:
-            kararlar.append((ihlal_zamani, "sofor_eylemi", "emniyet_kemeri_ihlali", round(ortalama_guven, 2)))
-
-    for (et, orta, sure) in bakinma_seg([(s, o) for s, o in off_kayit if o is not None], dt):
+    bakinma_sonuclar = bakinma_seg([(s, o) for s, o in off_kayit if o is not None], dt)
+    for (et, orta, sure) in bakinma_sonuclar:
         kararlar.append((orta, "sofor_eylemi", et, min(0.99, 0.5+sure/10)))
 
+    # ARKAYA_BAKMA (mediapipe-tabanli, bagimsiz): pose modeli (bakinma_olc) tam arkaya
+    # donuldugunde burnu goremeyip None dondugu icin bakinma_seg bu anlari kacirabilir --
+    # onun yerine mediapipe'in SOFORUN yuzunu ARDISIK (bosluk toleransli, tek karelik
+    # "yuz bulundu" titremelerine karsi dayanikli) bulamadigi sureyi dogrudan olcer;
+    # T_ARKAYA'yi asarsa arkaya_bakma yazilir. bakinma_seg'in ayni zaman araliginda zaten
+    # bulmus oldugu arkaya_bakma ile CAKISIRSA tekrar yazilmaz. Ayrica ONCESINDE (son
+    # ARKAYA_ETRAFA_SOGUMA_SN icinde) zaten bir etrafa_bakinma yazildiysa da bastirilir --
+    # ayni fiziksel donuşün hem etrafa_bakinma hem arkaya_bakma olarak cift yazilmasini onler.
+    pose_arkaya_araliklari = [(orta, sure) for (et, orta, sure) in bakinma_sonuclar if et == "arkaya_bakma"]
+    etrafa_zamanlari = [orta for (et, orta, sure) in bakinma_sonuclar if et == "etrafa_bakinma"]
+    for (orta, sure) in yuz_kayip_seg(yuz_kayit, dt, T_ARKAYA, YUZ_BOSLUK_TOLERANS):
+        cakisiyor = any(abs(orta - o2) < (sure+s2)/2 for o2, s2 in pose_arkaya_araliklari)
+        son_etrafa_var = any(orta - ARKAYA_ETRAFA_SOGUMA_SN <= et_orta <= orta for et_orta in etrafa_zamanlari)
+        if not cakisiyor and not son_etrafa_var:
+            kararlar.append((orta, "sofor_eylemi", "arkaya_bakma", min(0.99, 0.5+sure/10)))
+
+    # TERSI YONDE SOGUMA: bir arkaya_bakma'dan SONRAKI ARKAYA_ETRAFA_SOGUMA_SN icinde
+    # gelen etrafa_bakinma'lar da bastirilir -- ayni donusun kuyrugunun ayrica kisa bir
+    # yana bakis olarak cift yazilmasini onler.
+    arkaya_zamanlari_tum = [orta for (orta, kat, et, conf) in kararlar if et == "arkaya_bakma"]
+    kararlar = [
+        k for k in kararlar
+        if not (k[2] == "etrafa_bakinma" and any(a_orta < k[0] <= a_orta + ARKAYA_ETRAFA_SOGUMA_SN for a_orta in arkaya_zamanlari_tum))
+    ]
+
     # Çakışma Önleme (sigara/telefon artik canli yazildigi icin vehicle_events'ten de dahil edilir)
-    bakinmalar = [k for k in kararlar if k[2] == "etrafa_bakinma"]
+    # NOT: esneme de buraya dahil -- konusma/sigara/su icme sirasindaki agiz/cene hareketi
+    # ayni MAR sinyalini tetikleyip yanlislikla esneme sayilabiliyor.
+    KORUNAN_ETIKETLER = ("etrafa_bakinma", "esneme")
+    korunanlar = [k for k in kararlar if k[2] in KORUNAN_ETIKETLER]
     digerleri = [k for k in kararlar if k[2] in ("sigara_icme", "su_icme")]
-    digerleri += [(ev["zaman_saniye"], "sofor_eylemi", ev["etiket"])
+    digerleri += [(ev["zaman_saniye"], "sofor_eylemi", ev["etiket"], ev["confidence_score"])
                   for ev in vehicle_events
                   if ev["kategori"] == "sofor_eylemi" and ev["etiket"] in ("sigara_icme", "telefonla_konusma")]
-    yeni_kararlar = [k for k in kararlar if k[2] != "etrafa_bakinma"]
-    for b in bakinmalar:
+    yeni_kararlar = [k for k in kararlar if k[2] not in KORUNAN_ETIKETLER]
+    for b in korunanlar:
         cakisiyor = False
         for d in digerleri:
             if abs(b[0] - d[0]) <= 1.5:
@@ -1267,22 +1488,19 @@ def run_inference(video_path):
             vehicle_events.append(tespit_olustur(sn, kat, et, guv))
             son_zaman[et] = sn
 
-    # === Olayları Maksimum Adetle Sınırlama Filtresi ===
+    # === Aynı Etiketin 5sn İçinde Tekrarını Engelleme (Soğuma) ===
     filtered_events = []
-    seen_counts = {}
-    for ev in vehicle_events:
+    son_yazilan = {}
+    for ev in sorted(vehicle_events, key=lambda e: e["zaman_saniye"]):
+        # Sonekleri temizle
+        if ev["etiket"].startswith("teknocan_"): ev["etiket"] = "teknocan"
+        if ev["etiket"].startswith("bilgisayar_"): ev["etiket"] = "bilgisayar"
         etiket = ev["etiket"]
-        
-        # İçi/dışı olarak etiketlenmiş benzersiz olayların her biri maksimum 1 kez yazılır
-        max_allowed = 1
-            
-        seen_counts[etiket] = seen_counts.get(etiket, 0) + 1
-        if seen_counts[etiket] <= max_allowed:
-            # Sonekleri temizle
-            if etiket.startswith("teknocan_"): ev["etiket"] = "teknocan"
-            if etiket.startswith("bilgisayar_"): ev["etiket"] = "bilgisayar"
+
+        if etiket not in son_yazilan or (ev["zaman_saniye"] - son_yazilan[etiket]) >= 5.0:
             filtered_events.append(ev)
-            
+            son_yazilan[etiket] = ev["zaman_saniye"]
+
     vehicle_events = filtered_events
 
     # Yolcular artik CANLI olarak (kilitlendigi an) vehicle_events'e yazildi -- burada
@@ -1316,5 +1534,17 @@ def run_inference(video_path):
             arac = arac_bilgisi_olustur(v_t, v_p, v_c, 0.50)
         else:
             arac = arac_bilgisi_olustur("sedan", "", "beyaz", 0.0)
+
+    # SON GUVENLIK KATMANI: FTR sartnamesinin izin verdigi etiket disina cikan hicbir kayit
+    # JSON'a yazilmaz -- kategori-etiket eslesmesi GECERLI_* setleriyle dogrulanir.
+    GECERLI_KATEGORI_ETIKET = {
+        "sofor_eylemi": GECERLI_SOFOR_EYLEMI,
+        "nesneler": GECERLI_NESNELER,
+        "yolcular": GECERLI_YOLCULAR,
+    }
+    vehicle_events = [
+        ev for ev in vehicle_events
+        if ev["etiket"] in GECERLI_KATEGORI_ETIKET.get(ev["kategori"], set())
+    ]
 
     return sonuc_birlestir(video_name, arac, vehicle_events)
