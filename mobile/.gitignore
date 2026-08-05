@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Windows masaüstü platformu üründen değil — yalnızca yerel geliştirme
+# makinesinde (webview_flutter/video_player Windows'ta kayıtlı değil,
+# yalnızca ffmpeg/HTTP akışları test edilebiliyor) hızlı derleme/çalıştırma
+# için eklendi. Hedef platform telefon (Android); bu klasör repo'ya girmez.
+/windows/

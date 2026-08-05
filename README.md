@@ -129,9 +129,9 @@ flutter run --dart-define=BACKEND_URL=http://localhost:8000
   videosundan şema-geçerli sonuç üretiyor.
 - [x] **Uçtan uca** — mobil servis kodu → backend → gerçek AI imajı →
   sonuç zinciri baştan sona kanıtlandı.
-- [ ] **VM doğrulaması** — imaj boyutu (şu an 10.8GB, limit 8GB — temizlik
-  yazıldı, henüz ölçülmedi) ve çalışma süresi (578sn, limit 600sn) gerçek
-  donanımda (Tesla T4) yeniden ölçülecek.
+- [ ] **VM doğrulaması** — imaj boyutu (rebuild + ölçüm yapıldı: 10.8GB →
+  9.19GB, limit 8GB — hâlâ ~1.2GB fazla, detay `PLAN.md`) ve çalışma süresi
+  (578sn, limit 600sn) gerçek donanımda (Tesla T4) yeniden ölçülecek.
 - [ ] **7 Ağustos** — gerçek Turkcell erişimi açılınca `USE_MOCK_5G=false`
   ile tam kuru prova + imaj dondurma.
 

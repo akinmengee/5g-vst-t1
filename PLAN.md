@@ -188,12 +188,17 @@ istemciye dönüş zinciri baştan sona çalıştığı kanıtlandı.
 
 ## Bilinen Riskler
 
-- **İmaj boyutu: 10.8GB, FTR limiti 8GB.** Dockerfile'a temizlik yazıldı
-  (triton kaldırma — yalnızca `torch.compile` için, kullanılmıyor; üç
-  OpenCV kopyasından ikisini kaldırma; `torch/include` başlıklarını silme;
-  yalnızca fiilen kullanılan 16 ağırlığı kopyalama — `yolov8m.pt` dahil 4
-  ölü ağırlık artık kopyalanmıyor) ama **henüz build edilip ölçülmedi.**
-  Faz C'de VM'de yapılacak ilk iş bu.
+- **İmaj boyutu: 9.19GB (ölçüldü), FTR limiti 8GB — hâlâ ~1.2GB fazla.**
+  Dockerfile temizliği (triton kaldırma, OpenCV kopya kaldırma,
+  `torch/include` silme, yalnızca fiilen kullanılan 16 ağırlığı kopyalama)
+  uygulanıp yerelde (RTX 2060 makinesi) yeniden build edildi: 10.8GB →
+  9.19GB. Yetmedi. Katman dökümü (`docker history`): `pip3 install` katmanı
+  tek başına 5.06GB (torch+CUDA kütüphaneleri+opencv+mediapipe+ultralytics),
+  `apt-get`/CUDA base katmanları ~3.9GB, ağırlıklar 183MB. Sonraki adaylar:
+  `nvidia-nccl-cu12` (~188MB indirilen — çoklu-GPU haberleşmesi, tek Tesla
+  T4'te muhtemelen gereksiz, ama torch import'unu kırıp kırmadığı test
+  edilmeli), `matplotlib`/`polars` gibi mediapipe'ın çektiği ama
+  `predict.py`'nin kullanmadığı paketler. Faz C'de VM'de ele alınacak.
 - **Çalışma süresi: 578 saniye, limit 600 saniye — yalnızca 22 saniye pay
   var** (114 saniyelik gerçek Faz 2 videosu, RTX 2060'ta). `predict.py`'de
   `atlama = 1`, yani **her kare** 16 modelden geçiyor. Kare atlama en büyük
