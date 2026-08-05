@@ -14,13 +14,12 @@ RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
+# NCCL KALDIRILMAZ: pip'ten kurulan torch, libnccl.so.2'ye import aninda
+# baglaniyor -- "tek GPU'da kullanilmiyor" varsayimiyla kaldirilinca
+# `import torch` ImportError ile komple cokuyor (VM'de docker run ile
+# dogrulandi). torch/testing dersinin aynisi: calisan bir alt bagimlilik,
+# "gereksiz" gorunse de silinemez.
 RUN pip3 install --no-cache-dir -r requirements.txt \
-    # NCCL sadece coklu-GPU (kartlar arasi) haberlesme icin -- bu pipeline tek GPU'da
-    # calisiyor, hic kullanilmiyor. Cikarim performansini (cuDNN/cuBLAS'a dokunmuyoruz)
-    # etkilemeden ~200-300MB dusuruyor. Paket adi CUDA surumune gore degisebildigi icin
-    # (nvidia-nccl-cu12/cu13) ikisini de dener, hangisi kuruluysa onu kaldirir, hata
-    # verirse build'i kesmez.
-    && (pip3 uninstall -y nvidia-nccl-cu12 nvidia-nccl-cu13 || true) \
     && find /opt/venv -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true \
     && find /opt/venv -name "*.pyc" -delete
 
