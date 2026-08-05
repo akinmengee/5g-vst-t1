@@ -206,6 +206,33 @@ class DotMatrixBackground extends StatelessWidget {
   }
 }
 
+/// Giriş (NV) ekranı dışındaki ekranların ortak arka planı: 5G ışık hüzmesi
+/// görseli, hafif saydam — içerik (beyaz kartlar) her zaman öncelikli okunur
+/// kalsın diye düşük opaklıkta.
+class AppBackground extends StatelessWidget {
+  final Widget child;
+  const AppBackground({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: Opacity(
+            opacity: 0.22,
+            child: Image.asset(
+              'assets/images/app_background.jpg',
+              fit: BoxFit.cover,
+              alignment: Alignment.topCenter,
+            ),
+          ),
+        ),
+        child,
+      ],
+    );
+  }
+}
+
 /// Adım rozetleri (Open Gateway Demo UX Kılavuzu: 01 Doğrula → 07 Trace) için
 /// tutarlı bir görsel dil — sarı daire içinde numara.
 class StepBadge extends StatelessWidget {

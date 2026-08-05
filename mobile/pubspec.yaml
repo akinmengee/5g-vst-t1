@@ -80,6 +80,9 @@ flutter:
   # For details regarding adding assets from package dependencies, see
   # https://flutter.dev/to/asset-from-package
 
+  assets:
+    - assets/images/app_background.jpg
+
   # Pakete gömülü fontlar: demo günü internet olmadan da aynı tipografi.
   # Gövde: Inter; hash/plaka/kod gibi teknik değerler: JetBrains Mono.
   fonts:

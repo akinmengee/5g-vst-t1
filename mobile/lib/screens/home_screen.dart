@@ -105,49 +105,51 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ],
         ),
       ),
-      body: Column(
-        children: [
-          StepTimeline(currentStep: controller.currentStepIndex),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Entrance(child: SessionCard(session: controller.nvSession)),
-                    const SizedBox(height: 12),
-                    Entrance(
-                      delayMs: 70,
-                      child: QodCard(
-                        session: controller.qodSession,
-                        loading: controller.qodLoading,
-                        onStart: () => controller.startQod(),
-                        bandwidthBefore: controller.bandwidthBefore,
-                        bandwidthAfter: controller.bandwidthAfter,
-                        bandwidthMeasuring: controller.bandwidthMeasuring,
+      body: AppBackground(
+        child: Column(
+          children: [
+            StepTimeline(currentStep: controller.currentStepIndex),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      Entrance(child: SessionCard(session: controller.nvSession)),
+                      const SizedBox(height: 12),
+                      Entrance(
+                        delayMs: 70,
+                        child: QodCard(
+                          session: controller.qodSession,
+                          loading: controller.qodLoading,
+                          onStart: () => controller.startQod(),
+                          bandwidthBefore: controller.bandwidthBefore,
+                          bandwidthAfter: controller.bandwidthAfter,
+                          bandwidthMeasuring: controller.bandwidthMeasuring,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    Entrance(
-                      delayMs: 140,
-                      child: VideoCard(
-                        controller: controller,
-                        onOpenResult: (jobId) {
-                          controller.selectJob(jobId);
-                          _tabController.animateTo(1);
-                        },
+                      const SizedBox(height: 12),
+                      Entrance(
+                        delayMs: 140,
+                        child: VideoCard(
+                          controller: controller,
+                          onOpenResult: (jobId) {
+                            controller.selectJob(jobId);
+                            _tabController.animateTo(1);
+                          },
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 24),
-                  ],
-                ),
-                const AiResultTab(),
-                TraceTab(traceLog: controller.traceLog),
-              ],
+                      const SizedBox(height: 24),
+                    ],
+                  ),
+                  const AiResultTab(),
+                  TraceTab(traceLog: controller.traceLog),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
