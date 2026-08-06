@@ -158,21 +158,6 @@ class _TraceRow extends StatelessWidget {
 
   Widget _statusChip(int code, TraceStatus status) {
     final color = status == TraceStatus.error ? AppTheme.danger : AppTheme.success;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        '$code',
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w700,
-          fontSize: 11,
-          fontFeatures: const [FontFeature.tabularFigures()],
-        ),
-      ),
-    );
+    return PillBadge(color: color, label: '$code');
   }
 }

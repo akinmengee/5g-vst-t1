@@ -144,6 +144,7 @@ class SessionController extends ChangeNotifier {
       final result = await _nvService.fetchStatus(flowId);
       switch (result.status) {
         case 'verified':
+          await _startFreshSession();
           nvSession = nvSession.copyWith(status: NvStatus.verified);
           _notify();
           return;
@@ -175,6 +176,19 @@ class SessionController extends ChangeNotifier {
       );
       _notify();
     }
+  }
+
+  /// Her başarılı NV sonrası çağrılır (yeni giriş ya da aynı numarayla
+  /// tekrar deneme fark etmez): cihazdaki önceki kayıtlar diskten SİLİNİR,
+  /// liste ve seçili iş sıfırlanır. Demo/test sırasında Home ve AI Sonucu
+  /// hep temiz açılsın diye — logout() bunu zaten yapıyordu ama yalnızca
+  /// bellekte; disk üzerindeki .mp4 dosyaları kalıyordu ve uygulama yeniden
+  /// açıldığında ([_loadExistingRecordings]) geri geliyordu.
+  Future<void> _startFreshSession() async {
+    await _recordingService.deleteAllRecordings();
+    if (_disposed) return;
+    recordings.clear();
+    selectedJobId = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -318,6 +332,7 @@ class SessionController extends ChangeNotifier {
       item.uploadState = UploadState.uploaded;
       item.jobId = upload.jobId;
       item.aiStatus = AiResultStatus.processing;
+      item.processingStartedAt = DateTime.now();
       _scheduleAiPoll();
     } else {
       item.uploadState = UploadState.failed;

@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../config/app_config.dart';
 import '../models/ai_result.dart';
 import '../models/recording_item.dart';
 import '../state/session_controller.dart';
@@ -259,7 +261,7 @@ class _JobDetail extends StatelessWidget {
 
     final Widget govde;
     if (item.aiStatus == AiResultStatus.processing) {
-      govde = const _ProcessingState();
+      govde = _ProcessingState(startedAt: item.processingStartedAt);
     } else if (item.aiStatus == AiResultStatus.failed) {
       govde = const EmptyState(
         icon: Icons.error_outline,
@@ -757,36 +759,151 @@ String prettyLabel(String? raw) {
   return raw.replaceAll('_', ' ');
 }
 
-/// AI işlerken gösterilen bekleme durumu.
-class _ProcessingState extends StatelessWidget {
-  const _ProcessingState();
+/// AI işlerken gösterilen bekleme durumu — canlı bir sayaçla ne kadar
+/// süredir işlendiğini gösterir. Final Yarışma Senaryosu § 5: her inference
+/// için tanınan üst sınır 10 dakika; sayaç bu tavana yaklaştıkça (7 dk
+/// sonrası sarı, 9 dk sonrası kırmızı) renk değiştirerek erken uyarı verir.
+class _ProcessingState extends StatefulWidget {
+  final DateTime? startedAt;
+
+  const _ProcessingState({required this.startedAt});
+
+  @override
+  State<_ProcessingState> createState() => _ProcessingStateState();
+}
+
+class _ProcessingStateState extends State<_ProcessingState>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 2),
+  )..repeat(reverse: true);
+
+  Timer? _ticker;
+  Duration _elapsed = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  void _tick() {
+    final started = widget.startedAt;
+    if (!mounted) return;
+    setState(() {
+      _elapsed = started == null ? Duration.zero : DateTime.now().difference(started);
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _pulse.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final maxMs = AppConfig.aiProcessingTimeout.inMilliseconds;
+    final fraction = widget.startedAt == null
+        ? 0.0
+        : (_elapsed.inMilliseconds / maxMs).clamp(0.0, 1.0);
+    final asildi = _elapsed >= AppConfig.aiProcessingTimeout;
+
+    final renk = asildi
+        ? AppTheme.danger
+        : fraction >= 0.7
+            ? AppTheme.warning
+            : AppTheme.navy;
+
+    final dakika = _elapsed.inMinutes.toString().padLeft(2, '0');
+    final saniye = _elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
+
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Stack(
-            alignment: Alignment.center,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: AccentCard(
+          accentColor: renk,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
-                width: 64,
-                height: 64,
-                child: CircularProgressIndicator(strokeWidth: 3, color: AppTheme.navy),
+              AnimatedBuilder(
+                animation: _pulse,
+                builder: (context, child) {
+                  final t = _pulse.value;
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: 58 + t * 10,
+                        height: 58 + t * 10,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: renk.withValues(alpha: 0.08 * (1 - t)),
+                        ),
+                      ),
+                      child!,
+                    ],
+                  );
+                },
+                child: Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: renk.withValues(alpha: 0.10),
+                  ),
+                  child: Icon(Icons.auto_awesome, color: renk, size: 26),
+                ),
               ),
-              Icon(Icons.auto_awesome, color: AppTheme.navy.withValues(alpha: 0.7), size: 24),
+              const SizedBox(height: 20),
+              const Text('AI videoyu işliyor',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
+              const SizedBox(height: 4),
+              const Text(
+                'Tespitler hazır olduğunda otomatik görünecek',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.inkSoft, fontSize: 12.5),
+              ),
+              const SizedBox(height: 22),
+              Text(
+                '$dakika:$saniye',
+                style: TextStyle(
+                  fontFamily: AppTheme.monoFamily,
+                  fontSize: 36,
+                  fontWeight: FontWeight.w700,
+                  color: renk,
+                  letterSpacing: 1,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: fraction,
+                  minHeight: 5,
+                  backgroundColor: AppTheme.background,
+                  valueColor: AlwaysStoppedAnimation(renk),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                asildi
+                    ? 'Beklenenden uzun sürüyor — backend tarafında zaman aşımı yakında düşecek'
+                    : 'Yarışma kuralı: inference başına maksimum 10 dakika',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: asildi ? AppTheme.danger : AppTheme.inkSoft,
+                  fontWeight: asildi ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 18),
-          const Text('AI videoyu işliyor',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
-          const SizedBox(height: 5),
-          const Text(
-            'Tespitler hazır olduğunda otomatik görünecek',
-            style: TextStyle(color: AppTheme.inkSoft, fontSize: 12.5),
-          ),
-        ],
+        ),
       ),
     );
   }

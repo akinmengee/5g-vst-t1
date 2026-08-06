@@ -50,4 +50,9 @@ class AppConfig {
 
   /// mobile-integration.md 2.3: 60 sn'de sonuç gelmezse timeout gösterilir.
   static const Duration nvPollTimeout = Duration(seconds: 60);
+
+  /// Final Yarışma Senaryosu § 5: "Her inference için maksimum 10 dakikalık
+  /// süre tanınacak" — backend'deki `job_timeout_seconds` ile birebir aynı
+  /// değer. AI Sonucu ekranındaki sayaç bu tavana göre renk değiştirir.
+  static const Duration aiProcessingTimeout = Duration(minutes: 10);
 }

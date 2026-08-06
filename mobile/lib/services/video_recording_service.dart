@@ -57,6 +57,31 @@ class VideoRecordingService {
     }
   }
 
+  /// Cihazdaki TÜM yerel kayıtları siler (dosya + varsa .txt yan dosyaları
+  /// değil, yalnızca .mp4). Her başarılı NV sonrası çağrılır: aynı numarayla
+  /// tekrar tekrar test edilse bile Home hep temiz bir listeyle açılsın,
+  /// önceki oturumdan kalan dosyalar demo sırasında karışıklık yaratmasın.
+  Future<void> deleteAllRecordings() async {
+    if (kIsWeb) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final files = await dir
+          .list()
+          .where((e) => e is File && e.path.endsWith('.mp4'))
+          .cast<File>()
+          .toList();
+      for (final f in files) {
+        try {
+          await f.delete();
+        } catch (_) {
+          // Tek dosya silinemezse (ör. hâlâ açık) diğerlerini engellemesin.
+        }
+      }
+    } catch (_) {
+      // Dizine erişilemiyorsa sessizce geç — kritik bir akış değil.
+    }
+  }
+
   Future<RecordingResult> startRecording({
     required String hlsUrl,
     void Function(Duration elapsed)? onProgress,

@@ -28,7 +28,7 @@ class QodCard extends StatelessWidget {
   });
 
   Color get _accentColor => switch (session.outcome) {
-        QodOutcome.idle => Colors.grey.shade300,
+        QodOutcome.idle => AppTheme.idle,
         QodOutcome.success => AppTheme.success,
         QodOutcome.failed => AppTheme.warning,
       };
@@ -135,23 +135,7 @@ class QodCard extends StatelessWidget {
       QodOutcome.success => (AppTheme.success, session.qosStatus ?? 'REQUESTED'),
       QodOutcome.failed => (AppTheme.warning, 'DEVAM'),
     };
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w700,
-          fontSize: 11,
-          letterSpacing: 0.4,
-        ),
-      ),
-    );
+    return PillBadge(color: color, label: label);
   }
 }
 
@@ -194,22 +178,10 @@ class _BandwidthImpact extends StatelessWidget {
                   style: TextStyle(fontSize: 12, color: AppTheme.inkSoft)),
             ),
             if (deltaPct != null)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: (deltaPct >= 0 ? AppTheme.success : AppTheme.warning)
-                      .withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '${deltaPct >= 0 ? '+' : ''}${deltaPct.toStringAsFixed(0)}%',
-                  style: TextStyle(
-                    color: deltaPct >= 0 ? AppTheme.success : AppTheme.warning,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11.5,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
+              PillBadge(
+                color: deltaPct >= 0 ? AppTheme.success : AppTheme.warning,
+                label: '${deltaPct >= 0 ? '+' : ''}${deltaPct.toStringAsFixed(0)}%',
+                fontSize: 11.5,
               ),
           ],
         ),

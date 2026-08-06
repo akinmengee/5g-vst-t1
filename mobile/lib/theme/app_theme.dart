@@ -21,6 +21,12 @@ class AppTheme {
   static const warning = Color(0xFFE8850C);
   static const danger = Color(0xFFD93025);
 
+  /// Henüz başlamamış/pasif durum vurgusu (ör. QoD tetiklenmeden önce,
+  /// kayıt başlamadan önce). Material'ın saf grisi yerine lacivert tonuna
+  /// hafifçe kaçan, markaya ait bir nötr — kartlar arasında "bu da bir
+  /// durum rengi" tutarlılığını korur.
+  static const idle = Color(0xFFE2E4E9);
+
   // Metin renkleri
   static const ink = Color(0xFF17233B);
   static const inkSoft = Color(0xFF5B6478);
@@ -264,6 +270,56 @@ class StepBadge extends StatelessWidget {
           fontSize: 13,
           fontFeatures: [FontFeature.tabularFigures()],
         ),
+      ),
+    );
+  }
+}
+
+/// Durum rozeti: tinted arka plan (rengin %10 opaklığı) + kalın küçük metin,
+/// isteğe bağlı önde ikon. QoD/İz/SHA256 kartlarında ayrı ayrı el yazımı
+/// aynı `Container(BoxDecoration(...))` bloğu tekrar etmesin diye tek
+/// yerden — renk/köşe/yazı tipi buradan değişince her yerde birlikte değişir.
+class PillBadge extends StatelessWidget {
+  final Color color;
+  final String label;
+  final IconData? icon;
+  final double fontSize;
+
+  const PillBadge({
+    super.key,
+    required this.color,
+    required this.label,
+    this.icon,
+    this.fontSize = 11,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: fontSize + 2.5, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+              fontSize: fontSize,
+              letterSpacing: 0.3,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
       ),
     );
   }

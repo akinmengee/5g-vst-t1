@@ -76,7 +76,7 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
     super.build(context);
     final c = widget.controller;
     return AccentCard(
-      accentColor: c.recording ? AppTheme.danger : Colors.grey.shade300,
+      accentColor: c.recording ? AppTheme.danger : AppTheme.idle,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -310,7 +310,7 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
                 ),
                 onPressed: _initPlayer,
                 icon: const Icon(Icons.play_arrow),
-                label: const Text('Teknofest Start (HLS)'),
+                label: const Text('Yayını Başlat (HLS)'),
               ),
             ],
           ),

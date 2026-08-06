@@ -15,7 +15,7 @@ class SessionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AccentCard(
-      accentColor: session.isVerified ? AppTheme.success : Colors.grey.shade300,
+      accentColor: session.isVerified ? AppTheme.success : AppTheme.idle,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -43,27 +43,11 @@ class SessionCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppTheme.success.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.verified, color: AppTheme.success, size: 14),
-                    SizedBox(width: 4),
-                    Text(
-                      'Verified',
-                      style: TextStyle(
-                        color: AppTheme.success,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11.5,
-                      ),
-                    ),
-                  ],
-                ),
+              const PillBadge(
+                color: AppTheme.success,
+                label: 'Doğrulandı',
+                icon: Icons.verified,
+                fontSize: 11.5,
               ),
             ],
           ),

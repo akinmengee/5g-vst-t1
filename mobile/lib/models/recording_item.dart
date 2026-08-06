@@ -20,6 +20,10 @@ class RecordingItem {
   AiResultStatus aiStatus = AiResultStatus.idle;
   AiResult? aiResult;
 
+  /// Upload başarılı olup iş PROCESSING'e geçtiği an — AI Sonucu ekranındaki
+  /// canlı sayaç bu andan itibaren sayar (yarışma kuralı: maks. 10 dk).
+  DateTime? processingStartedAt;
+
   /// Sonuç JSON'unun SHA256'sı — sonuç geldiğinde BİR KEZ hesaplanır
   /// (ekran her çizilişinde yeniden hesaplanmaz).
   String? resultsSha256;
