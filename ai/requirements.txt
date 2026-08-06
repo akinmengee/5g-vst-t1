@@ -1,8 +1,29 @@
+# TUM SURUMLER SABIT (pinned) - kaynak: VM'de (Tesla T4) dogrulanmis calisan
+# imajin kendisi (06.08.2026, `importlib.metadata` dokumu). Faz2 dogruluk
+# olcumleri, sure olcumleri (1080p ~430sn / 4K / 240p) ve smoke testler BU
+# kombinasyonla alindi. FTR'deki ~0 kod puaninin koku sabitlenmemis
+# bagimlilikti - bir daha asla.
+#
+# UYARI: Buradaki surumleri yerel ortam surumlerine gore DEGISTIRMEYIN.
+# Yerel kurulumlar (or. ultralytics 8.3.x, opencv 4.13.x) imajdakiyle ayni
+# degil; pin kaynagi her zaman VM'de dogrulanmis imajdir.
+#
+# torch cu121'e sabit: --extra-index-url pip'e "buraya da bak" der; surum
+# sabitlenmezse PyPI'daki CUDA-13 derlemesi secilir, surucu uyusmaz ve is
+# sessizce CPU'ya duser (bir kez yasandi, VM'de dogrulandi).
 --extra-index-url https://download.pytorch.org/whl/cu121
-opencv-python-headless
-numpy
-ultralytics
-mediapipe
 torch==2.3.1+cu121
 torchvision==0.18.1+cu121
-lapx
+
+ultralytics==8.4.115
+mediapipe==1.0.0
+numpy==2.2.6
+lapx==0.9.4
+
+# Uc opencv paketi de ayni "cv2/" yoluna dosya yazar (kurulum sirasina gore
+# ust uste binerler). Ucunu de AYNI surume acikca sabitlemek bu ust uste
+# binmeyi deterministik yapar; birini kaldirmak digerlerini de bozuyor
+# (pip paylasilan dosyalari siler - VM'de dogrulandi, bkz. git gecmisi).
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
+opencv-python-headless==5.0.0.93

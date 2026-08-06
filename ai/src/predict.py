@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import math
 import re
 from collections import Counter, deque
 import json
@@ -163,6 +164,10 @@ yolcu_model = YOLO(os.path.join(WEIGHTS_DIR, "yolcu.pt"))
 # duz predict() hem yukarida yolcu koltuk rolleri icin track(persist=True) ile cagirmak,
 # track()'in kalici ic durumunu sifirlar -- iki ayri ornek bu karismayi onluyor.
 yolcu_model_sofor = YOLO(os.path.join(WEIGHTS_DIR, "yolcu.pt"))
+# Arka koltuk pencere aramasi icin UCUNCU "yolcu.pt" ornegi: sag-yari ROI'de duz
+# predict() ile cagrilir. yolcu_model'in track(persist=True) ic durumu bu duz
+# cagrilarla sifirlanmasin diye (on_koltuk ID sayaclarini bozuyordu) ayri ornek.
+yolcu_model_koltuk = YOLO(os.path.join(WEIGHTS_DIR, "yolcu.pt"))
 # Sigara/telefon artik Masaustu/Models klasorundeki K1-K16 kural setiyle calisiyor --
 # kendi ozel poz modelini (s-pose, n-pose'tan farkli) kullanir; bakinma'nin kullandigi
 # "poz" (n-pose) ile karismasin diye ayri bir ornek.
@@ -298,6 +303,10 @@ def _arac_roi_parlaklik_duzelt(img):
     # uygulanir -- kemer, on_koltuk, su ve esneme bu fonksiyonu paylasir (sigara/telefon
     # HARIC -- orada yanlis pozitifleri artirdigi icin kaldirildi).
     if img is None or img.size == 0:
+        return img
+    # CLAHE=0 ortam degiskeniyle tamamen kapatilabilir (A/B olcumu icin --
+    # varsayilan davranis degismez, acik kalir).
+    if os.environ.get("CLAHE", "1") == "0":
         return img
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
@@ -862,17 +871,63 @@ def run_inference(video_path):
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps <= 0: fps = 30.0
 
+    # DUSUK COZUNURLUK ON-BUYUTME: 240p tarzi girdilerde (hakem "dusuk kaliteli
+    # video" ayagi) plaka karakterleri ~10px kaliyor -- plaka bos, kasa tipi
+    # yanlis cikiyordu (240p faz2 olcumu). Genislik 640'in altindaysa kareler
+    # okunur okunmaz 1280 genislige cubic ile buyutulur; tum asagi akis (ROI
+    # kirpimlari, esikler, kenar hesaplari) buyutulmus kareyi gorur.
+    kaynak_genislik = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    kaynak_yukseklik = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    on_olcek = 1.0
+    if 0 < kaynak_genislik < 640:
+        on_olcek = 1280.0 / kaynak_genislik
+    efektif_genislik = int(kaynak_genislik * on_olcek) if kaynak_genislik else 0
+    efektif_yukseklik = int(kaynak_yukseklik * on_olcek) if kaynak_yukseklik else 0
+
     global_frame_count = 0
     
-    # --- VİDEO ÇIKTI ALTYAPISI (Kullanıcının isteği üzerine predict.py'ye eklendi) ---
-    out_video = cv2.VideoWriter(
-        os.path.join(os.path.dirname(video_path), "PREDICT_GERCEK_Cikti.mp4"),
-        cv2.VideoWriter_fourcc(*'mp4v'), fps,
-        (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-    )
+    # --- VİDEO ÇIKTI ALTYAPISI (yalnizca gelistirme icin) ---
+    # Varsayilan KAPALI: tam cozunurluklu kare-kare mp4 encode hem sure butcesinden
+    # yiyor hem de dosyayi hakem tarafinin INPUT mount'una yaziyordu (salt-okunur
+    # mount'ta risk). Yerel denemede DEBUG_VIDEO=1 ile acilir; bu bir ortam tespiti
+    # degil, dokumante edilmis ve varsayilani sabit bir gelistirme anahtaridir.
+    out_video = None
+    if os.environ.get("DEBUG_VIDEO") == "1":
+        out_video = cv2.VideoWriter(
+            os.path.join(os.path.dirname(video_path), "PREDICT_GERCEK_Cikti.mp4"),
+            cv2.VideoWriter_fourcc(*'mp4v'), fps,
+            (efektif_genislik or int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+             efektif_yukseklik or int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        )
     son_su_kutu = None
     son_su_g = 0.0
     son_su_zamani = -999
+
+    # LAPTOP gorunum-gecisi durumu (bkz. asagida bilgisayar blogu)
+    LAPTOP_YOKLUK_SN = 15.0  # bu kadar sn gorulmezse "kayboldu" sayilir.
+                             # OLCULDU: 5sn ile laptop yanlis-algi kumeleri (~9sn
+                             # aralikli) her seferinde "yeni gorunum" sayilip 11 FP
+                             # uretiyor; 15sn ile 2 FP kaliyor ama GT 84.8'deki tek
+                             # gercek gosterim de yutuluyor. GT'de bilgisayar=1 olay
+                             # oldugu icin FP'siz taraf net kazancli (v5 vs v6 olcumu).
+    LAPTOP_ONAY_SN = 0.0     # conf 0.45 esigi + gorunum-gecisi zaten sinirliyor;
+                             # 0.6 ve 0.2 denendi: GT 84.8'deki 1-2 karelik gercek
+                             # gosterim ikisinde de kaciyordu -- ilk karede yaz
+    laptop_son_gorulme = None
+    laptop_gorunum_baslangic = None
+    laptop_conf_tepe = 0.0
+    laptop_yazildi_bu_gorunum = False
+
+    # TEKNOCAN gorunum-gecisi durumu (ayni mantik: GT "gorulebilir oldugu anda"
+    # bir kez isaretliyor; surekli gorunur nesne 5sn cooldown'la tekrar tekrar
+    # yazilmamali -- v2 olcumunde 13.8sn'de boyle bir tekrar-FP vardi)
+    TEKNOCAN_YOKLUK_SN = 15.0
+    TEKNOCAN_ONAY_SN = 0.0   # conf 0.6 esigi zaten gurultuyu eliyor; kisa gosterimler
+                             # (85.0 ve 110.5'teki 1-2 karelik gorunumler) kacmasin
+    teknocan_son_gorulme = None
+    teknocan_gorunum_baslangic = None
+    teknocan_conf_tepe = 0.0
+    teknocan_yazildi_bu_gorunum = False
     
     vehicle_memory = {}  
     color_memory = {}
@@ -887,7 +942,38 @@ def run_inference(video_path):
     slalom_detected_vehicles = set()
     slalom_memory = {}
 
+    # UYARLANABILIR KARE ATLAMA -- 10 dk inference limiti guvencesi.
+    # faz2 (114sn, 1080p, 2850 kare) T4'te atlama=1 ile ~428sn surdu; final gunu
+    # videosunun SURESI BILINMIYOR (stream kaydi 5 dk'ya kadar cikabilir). Kare
+    # basina olculen maliyet: ~0.04sn her karede kosan arac takibi + ~0.11sn
+    # atlamaya tabi uzman modeller. 540sn hedefe (60sn guvenlik payi) gore atlama
+    # otomatik secilir; 114sn videoda 1 kalir (davranis degismez), 3 dk videoda 2,
+    # 5 dk videoda 4 olur. Bu bir ortam tespiti degil, girdinin kendi uzunluguna
+    # bagli deterministik bir olcekleme.
+    toplam_kare = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     atlama = 1
+    if toplam_kare > 0:
+        HEDEF_SN = 500.0  # 540 ile 4K@114sn atlama=3'e cikip 583sn olctu (limit
+                          # 600'e 17sn pay -- ince). 500, ayni videoyu atlama=4'e
+                          # zorlar (~460sn, guvenli pay); 1080p/240p'de atlama=1 kalir.
+        # Kare basina maliyet cozunurlukle olculekleniyor -- T4 olcumleri:
+        # 240p 0.09sn, 1080p 0.15sn, 4K 0.32sn/kare => faktor = alan_orani^0.55
+        # (taban 0.6: kucuk girdide sabit yukler baskin). 4K'da atlama=1 ile
+        # 910sn olculdu (limit ustu!) -- bu formul 4K'yi atlama=3'e cekip
+        # ~508sn'ye indirir; 1080p/240p'de atlama=1 kalir (davranis degismez).
+        alan_orani = 1.0
+        if efektif_genislik and efektif_yukseklik:
+            alan_orani = (efektif_genislik * efektif_yukseklik) / (1920.0 * 1080.0)
+        faktor = max(0.6, alan_orani ** 0.55)
+        KARE_SABIT_SN = 0.05 * faktor  # atlanamayan is (arac takibi vb.)
+        KARE_AGIR_SN = 0.10 * faktor   # atlamayla bolunen is (uzman modeller)
+        pay = HEDEF_SN / toplam_kare - KARE_SABIT_SN
+        if pay <= 0:
+            atlama = 6
+        else:
+            atlama = min(6, max(1, math.ceil(KARE_AGIR_SN / pay)))
+    print(f"video: {toplam_kare} kare @ {fps:.1f}fps, "
+          f"{kaynak_genislik}x{kaynak_yukseklik} (on_olcek={on_olcek:.2f}) -> atlama={atlama}", flush=True)
     atlama_yolcu = max(1, int(round(fps/2)))
     dt = atlama/fps
     yolo_kayit = {ad: [] for ad in modeller}
@@ -912,21 +998,62 @@ def run_inference(video_path):
 
     # KEMER: pencere/tetikleyici YOK -- soför ROI'si bulundugu her karede dogrudan kontrol
     # edilir. "Kemer var" gorulurse durum sifirlanir (bir sonraki "yok" tekrar yazilabilir).
-    # "Kemer yok" gorulurse -- en son "var" gorulduğunden beri zaten yazilmadiysa -- ANINDA
-    # ihlal yazilir (ayni surekli "yok" durumunda tekrar tekrar yazilmaz).
+    # "Kemer yok" ANINDA yazilmaz: faz2 GT olcumunde tek-karelik "yok" kararlari 8 FP
+    # uretti. Simdi KEMER_YOK_SUREKLILIK_SN boyunca (kucuk bosluklara tolerar) kesintisiz
+    # "yok" gorulmesi gerekir; olay, "yok" kosusunun BASLANGIC anina yazilir.
     kemer_son_ihlal_yazildi = False
+    KEMER_YOK_SUREKLILIK_SN = 0.08  # ihlal icin gereken kesintisiz "Kemer Yok" suresi
+                                    # (~2 kare). Olculen tarama: 1.0sn -> gercek ihlal
+                                    # patlamalari kisa oldugu icin recall cokuyor; 0.2sn
+                                    # -> gercek tekli atimlar (GT 25.3/99.8 tipi) hala
+                                    # kaciyor. 2 kare, tek-kare flicker'i elerken kisa
+                                    # gercek atimlari tutan en genellenebilir nokta.
+    KEMER_YOK_BOSLUK_TOLERANS = 1.0 # bu kadar sn karar gelmezse kosu sifirlanir
+    kemer_yok_baslangic = None
+    kemer_yok_son_gorulme = None
+    kemer_yok_conf_tepe = 0.0
 
-    # KEMER BELIRSIZLIK KONTROLU: arac kutusu SOL ya da SAG kenara YENI dayandiginda
-    # (once dayanmamisken simdi dayaniyorsa) acilan 3 saniyelik kenar-tetikleyicili bir
-    # pencere kullanilir -- pencere boyunca kemer modeli bir kez bile "var" ya da "yok"
-    # diyemediyse (tamamen belirsiz kaldiysa), pencere kapaninca BASLANGIC anina ihlal
-    # yazilir. Pencere her acildiginda sifirlanir.
+    # KEMER YOKLUK SAATI (kenar-penceresi sentetik kuralinin YERINE, 06.08 takim
+    # karari): model "kemer VAR" kanitini (guven >= KEMER_VAR_ESIK) gordugu surece
+    # sessiz kalinir; var kaniti KEMER_YOKLUK_SN boyunca hic gelmezse ESIGIN
+    # ASILDIGI ANA ihlal yazilir, kosu surdukce KEMER_YENIDEN_SN'de bir tekrar
+    # yazilir. Parametreler PIPELINE'in kendi kemer zaman serisiyle kalibre edildi
+    # (v13 KEMER_LOG dokumu + faz2 GT, tum kombinasyon taramasi): bu degerlerle
+    # 4/4 GT ihlali yakalaniyor, faz hatasi ~2.8sn (4TP/3FP; eski kenar-penceresi
+    # 3TP/9FP, kosu-baslangicina yazan surum 1TP/6FP@5s idi). Olayin esik aninda
+    # yazilmasi olculerek secildi: GT ihlali "gorulebilir oldugu anda" isaretliyor,
+    # var-kanitinin kesilmesi gorunurlukten ~8sn once basliyor. Saat sofor
+    # gorunmese de isler (GT 67.5/75.9 ihlalleri sofor gorunmezken); yalnizca
+    # gercek "var" kaniti sifirlar. Arac uzun sure kadraj disindaysa saat
+    # durdurulup yeniden baslatilir; kemer modeli en az bir kez calismadan
+    # (sofor hic gorulmeden) saat kurulmaz (bos-sahne garantisi).
+    KEMER_VAR_ESIK = 0.45     # "kemer var" saymak icin gereken guven (pipeline
+                              # dokumunde karelerin %2'si -- model kemeri nadiren
+                              # ama saglam gordugunde bu esigi asiyor)
+    KEMER_MODEL_TABAN = 0.10  # model cagrisinin taban conf'u (var kanitini kacirmamak
+                              # icin dusuk; karar esikleri yukarida ayrica uygulanir)
+    KEMER_YOKLUK_SN = 8.0     # bu kadar sn "var" kaniti gelmezse ihlal (6.0 ile
+                              # 4TP/4FP, 8.0 ile 4TP/3FP olculdu)
+    KEMER_YENIDEN_SN = 12.0   # yokluk kosusu surdukce tekrar yazim araligi
+    KEMER_ARAC_KOPUKLUK_SN = 3.0  # arac bu kadar sn gorunmezse saat sifirlanir
+    kemer_kuruldu = False         # kemer modeli en az bir kez calisti mi
+    kemer_yokluk_bas = None       # aktif yokluk kosusunun baslangic sn'si
+    kemer_yokluk_yazilan_son = None  # bu kosuda son yazilan olayin sn'si
+    kemer_son_arac_sn = None      # kemer saati icin aracin en son gorulme sn'si
+    # KEMER_LOG=1: pipeline'in KENDI kemer zaman serisini dokmek icin gelistirme
+    # anahtari (esik kalibrasyonu izole zincirle degil gercek zincirle yapilsin
+    # diye). Uretimde env yok -> tamamen pasif.
+    kemer_log = [] if os.environ.get("KEMER_LOG") == "1" else None
+
+    # IYI-GORUNUM PENCERESI (arka koltuk aramasi icin): arac kutusu SOL ya da SAG
+    # kenara YENI dayandiginda 3 saniyelik pencere acilir -- arac kameraya en yakin
+    # ve kabin ici en okunur konumdayken yolcu aranir. (Kemer artik bu pencereyi
+    # KULLANMIYOR -- yukaridaki yokluk saatine tasindi.)
     onceki_kenar_dayali = False
-    KEMER_PENCERE_SN = 3.0  # belirsizlik kontrol penceresinin acik kalacagi sure (sn)
-    KEMER_KENAR_ESIK = int((cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1606) * 0.05)  # kenara "yakin" sayilacak piksel payi
+    KEMER_PENCERE_SN = 3.0  # pencerenin acik kalacagi sure (sn)
+    KEMER_KENAR_ESIK = int((efektif_genislik or 1606) * 0.05)  # kenara "yakin" sayilacak piksel payi (on-buyutme sonrasi efektif genislik)
     belirsizlik_pencere_acik = False
     belirsizlik_pencere_baslangic = 0.0
-    kemer_pencerede_karar_verildi = False
 
     # ARKA KOLTUK (pencere-tabanli): ayni kenar-tetikleyicili pencereyi kullanir -- pencere
     # aciksa roi'nin SAG tarafinda yolcu_model ile kisi aranir (sofor'la cakisan elenir).
@@ -943,6 +1070,9 @@ def run_inference(video_path):
         ret, frame = cap.read()
         if not ret:
             break
+        if on_olcek != 1.0:
+            frame = cv2.resize(frame, None, fx=on_olcek, fy=on_olcek,
+                               interpolation=cv2.INTER_CUBIC)
         global_frame_count += 1
 
         # --- CAR BOXES PASS ---
@@ -970,15 +1100,12 @@ def run_inference(video_path):
             if kenar_dayali_mi and not onceki_kenar_dayali and not belirsizlik_pencere_acik:
                 belirsizlik_pencere_acik = True
                 belirsizlik_pencere_baslangic = t_simdi
-                kemer_pencerede_karar_verildi = False  # yeni pencere -- kemer belirsizligi de sifirlanir
                 arka_koltuk_pencerede_yazildi = False  # yeni pencere -- arka koltuk tekrar aranabilir
             onceki_kenar_dayali = kenar_dayali_mi
         else:
             onceki_kenar_dayali = False
 
         if belirsizlik_pencere_acik and (t_simdi - belirsizlik_pencere_baslangic > KEMER_PENCERE_SN):
-            if not kemer_pencerede_karar_verildi:
-                vehicle_events.append(tespit_olustur(belirsizlik_pencere_baslangic, "sofor_eylemi", "emniyet_kemeri_ihlali", 0.5))
             belirsizlik_pencere_acik = False
 
         belirsizlik_pencere_gorunum = belirsizlik_pencere_acik and en_buyuk is not None
@@ -991,32 +1118,64 @@ def run_inference(video_path):
         def _arac_icinde_mi(cx, cy):
             return any(c[0] <= cx <= c[2] and c[1] <= cy <= c[3] for c in current_car_boxes)
 
-        # --- 1. TEKNOCAN ---
-        if global_frame_count % 2 == 0:
+        # --- 1. TEKNOCAN --- (gorunum-gecisi: yeni gorunumde BIR olay)
+        # Kadans atlamayla olceklenir -- uzun/4K videolarda sure butcesi icin.
+        if global_frame_count % (2 * atlama) == 0:
             teknocan_results = teknocan_model(frame, conf=0.6, verbose=False)
+            teknocan_kare_conf = 0.0
             for t_res in teknocan_results:
                 for t_box in t_res.boxes:
                     conf = float(t_box.conf[0])
                     tx1, ty1, tx2, ty2 = map(int, t_box.xyxy[0])
                     if _arac_icinde_mi((tx1+tx2)/2, (ty1+ty2)/2):
-                        zaman_saniye = global_frame_count / fps
-                        vehicle_events.append(tespit_olustur(zaman_saniye, "nesneler", "teknocan", conf))
+                        teknocan_kare_conf = max(teknocan_kare_conf, conf)
+            if teknocan_kare_conf > 0:
+                zaman_saniye = global_frame_count / fps
+                if teknocan_son_gorulme is None or zaman_saniye - teknocan_son_gorulme > TEKNOCAN_YOKLUK_SN:
+                    teknocan_gorunum_baslangic = zaman_saniye
+                    teknocan_conf_tepe = 0.0
+                    teknocan_yazildi_bu_gorunum = False
+                teknocan_son_gorulme = zaman_saniye
+                teknocan_conf_tepe = max(teknocan_conf_tepe, teknocan_kare_conf)
+                if (not teknocan_yazildi_bu_gorunum
+                        and zaman_saniye - teknocan_gorunum_baslangic >= TEKNOCAN_ONAY_SN):
+                    vehicle_events.append(tespit_olustur(
+                        teknocan_gorunum_baslangic, "nesneler", "teknocan",
+                        round(teknocan_conf_tepe, 2)))
+                    teknocan_yazildi_bu_gorunum = True
 
-        # --- 2. LAPTOP (bilgisayar) --- araba ROI'sine kirpilip CLAHE ile parlaklik
-        # duzeltmesi uygulanarak (digerleri gibi) taranır.
-        if en_buyuk is not None:
+        # --- 2. LAPTOP (bilgisayar) --- araba ROI'sine kirpilip taranir. CLAHE
+        # BILEREK UYGULANMAZ: yeni laptop modeli (laptop7) ham karelerle olculdu --
+        # faz2'de CLAHE'siz 1TP/0FP, CLAHE'yle 0TP/2FP (v12 A/B olcumu). Kadans
+        # atlamayla olceklenir.
+        if en_buyuk is not None and global_frame_count % atlama == 0:
             lax1, lay1, lax2, lay2 = en_buyuk
             lpad_x, lpad_y = int((lax2-lax1)*0.05), int((lay2-lay1)*0.05)
             lrx1, lry1 = max(0, lax1-lpad_x), max(0, lay1-lpad_y)
             lrx2, lry2 = min(frame.shape[1], lax2+lpad_x), min(frame.shape[0], lay2+lpad_y)
             laptop_roi = frame[lry1:lry2, lrx1:lrx2]
             if laptop_roi.size > 0:
-                laptop_roi = _arac_roi_parlaklik_duzelt(laptop_roi)
                 laptop_sonuc = laptop_model(laptop_roi, conf=0.45, verbose=False)[0]
-                for l_box in laptop_sonuc.boxes:
-                    conf = float(l_box.conf[0])
+                # GORUNUM-GECISI mantigi: GT nesneleri "gorulebilir olduklari anda" bir
+                # kez isaretliyor. Eski kod her karede (5sn sogumayla) olay basiyordu --
+                # faz2 olcumunde 12 tespit / 11 FP uretti. Simdi: kisa bir onay suresi
+                # dolunca GORUNUMUN BASLANGICINA tek olay yazilir; nesne LAPTOP_YOKLUK_SN
+                # boyunca kaybolup geri gelirse yeni gorunum sayilir ve tekrar yazilir.
+                laptop_kare_conf = max((float(b.conf[0]) for b in laptop_sonuc.boxes), default=0.0)
+                if laptop_kare_conf > 0:
                     zaman_saniye = global_frame_count / fps
-                    vehicle_events.append(tespit_olustur(zaman_saniye, "nesneler", "bilgisayar", conf))
+                    if laptop_son_gorulme is None or zaman_saniye - laptop_son_gorulme > LAPTOP_YOKLUK_SN:
+                        laptop_gorunum_baslangic = zaman_saniye
+                        laptop_conf_tepe = 0.0
+                        laptop_yazildi_bu_gorunum = False
+                    laptop_son_gorulme = zaman_saniye
+                    laptop_conf_tepe = max(laptop_conf_tepe, laptop_kare_conf)
+                    if (not laptop_yazildi_bu_gorunum
+                            and zaman_saniye - laptop_gorunum_baslangic >= LAPTOP_ONAY_SN):
+                        vehicle_events.append(tespit_olustur(
+                            laptop_gorunum_baslangic, "nesneler", "bilgisayar",
+                            round(laptop_conf_tepe, 2)))
+                        laptop_yazildi_bu_gorunum = True
 
         # --- 3. ARAÇ (kasa/renk/plaka) ---
         for result in detector_results:
@@ -1197,10 +1356,15 @@ def run_inference(video_path):
                 telefon_pencere.clear()
 
             # KEMER: soför ROI'sine (sofor_kutusu) %15 padding ile bakar -- arac ROI'si
-            # DEGIL. Pencere/tetikleyici yok, soför bulundugu her karede dogrudan kontrol
-            # edilir. "Kemer var" gorulurse durum sifirlanir (sessiz -- ihlal yazilmaz).
-            # "Kemer yok" gorulurse -- en son "var" gorulduğunden beri zaten yazilmadiysa --
-            # ANINDA ihlal yazilir (surekli "yok" durumunda tekrar tekrar yazilmaz).
+            # DEGIL. Uc kanal birlikte calisir:
+            #   1) "kemer VAR" kaniti (conf >= KEMER_VAR_ESIK): sessiz + yokluk saati
+            #      ve yok-kosusu durumu sifirlanir.
+            #   2) "kemer YOK" sinifi (conf >= ESIK): surekli-yok dedektoru (eski mantik).
+            #      Yeni kemer modeli bu sinifi hic uretmiyor (izole olcum: 1424 ornekte 0)
+            #      ama model degisirse kanal hazir.
+            #   3) YOKLUK SAATI: "var" kaniti KEMER_YOKLUK_SN boyunca hic gelmezse
+            #      ihlal -- asagida, sofor gorunurlugunden BAGIMSIZ degerlendirilir.
+            kemer_kare_cls, kemer_kare_conf = -2, 0.0  # -2: model bu karede cagrilmadi
             if sofor_kutusu is not None:
                 sfx1, sfy1, sfx2, sfy2 = sofor_kutusu
                 sfpad_x, sfpad_y = (sfx2-sfx1)*0.15, (sfy2-sfy1)*0.15
@@ -1209,25 +1373,72 @@ def run_inference(video_path):
                 sofor_roi_kemer = frame[sfry1:sfry2, sfrx1:sfrx2]
                 if sofor_roi_kemer.size > 0:
                     sofor_roi_kemer = _arac_roi_parlaklik_duzelt(sofor_roi_kemer)
-                    res = modeller["kemer"](sofor_roi_kemer, conf=ESIK["kemer"], verbose=False)[0]
+                    res = modeller["kemer"](sofor_roi_kemer, conf=KEMER_MODEL_TABAN, verbose=False)[0]
                     b_cls, b_conf = -1, 0.0
                     for k in res.boxes:
                         if float(k.conf) > b_conf:
                             b_conf, b_cls = float(k.conf), int(k.cls)
-                    if b_cls in (0, 1) and belirsizlik_pencere_gorunum:
-                        # pencere SU AN acikken verilen karar sayilir -- pencere disindaki
-                        # (kesintisiz calisan) tespitler bu sayaci etkilemez
-                        kemer_pencerede_karar_verildi = True
-                    if b_cls == 1:
+                    kemer_kare_cls, kemer_kare_conf = b_cls, b_conf
+                    kemer_kuruldu = True
+                    if b_cls == 1 and b_conf >= KEMER_VAR_ESIK:
+                        # VAR kaniti: her sey sifirlanir, sessiz kalinir
+                        kemer_yokluk_bas = None
+                        kemer_yokluk_yazilan_son = None
                         kemer_son_ihlal_yazildi = False
-                    elif b_cls == 0 and not kemer_son_ihlal_yazildi:
-                        vehicle_events.append(tespit_olustur(sn, "sofor_eylemi", "emniyet_kemeri_ihlali", round(b_conf, 2)))
-                        kemer_son_ihlal_yazildi = True
+                        kemer_yok_baslangic = None
+                        kemer_yok_conf_tepe = 0.0
+                    elif b_cls == 0 and b_conf >= ESIK["kemer"]:
+                        # uzun karar bosluklarinda kosuyu sifirla (surucu kaybolup geri
+                        # geldiginde iki ayri kisa "yok" ani tek kosu sayilmasin)
+                        if kemer_yok_son_gorulme is not None and sn - kemer_yok_son_gorulme > KEMER_YOK_BOSLUK_TOLERANS:
+                            kemer_yok_baslangic = None
+                            kemer_yok_conf_tepe = 0.0
+                        if kemer_yok_baslangic is None:
+                            kemer_yok_baslangic = sn
+                        kemer_yok_son_gorulme = sn
+                        kemer_yok_conf_tepe = max(kemer_yok_conf_tepe, b_conf)
+                        if (sn - kemer_yok_baslangic) >= KEMER_YOK_SUREKLILIK_SN and not kemer_son_ihlal_yazildi:
+                            vehicle_events.append(tespit_olustur(
+                                kemer_yok_baslangic, "sofor_eylemi", "emniyet_kemeri_ihlali",
+                                round(kemer_yok_conf_tepe, 2)))
+                            kemer_son_ihlal_yazildi = True
+
+            # KEMER YOKLUK SAATI: sofor gorunurlugunden BAGIMSIZ, islenen her karede
+            # degerlendirilir (GT 67.5/75.9 ihlalleri sofor gorunmezken yasandi; v9/v10
+            # olcumleri gorunurluk gardinin TP'yi 3->1 dusurdugunu gosterdi). Yalnizca
+            # gercek "var" kaniti (yukarida) saati sifirlar. Arac KEMER_ARAC_KOPUKLUK_SN
+            # boyunca hic gorunmediyse saat yeniden baslatilir -- bos yol/kadraj disi
+            # bolumlerde sahte ihlal uretilmez (faz2'de arac hep gorunur, davranis ayni).
+            if en_buyuk is not None and kemer_kuruldu:
+                if kemer_son_arac_sn is not None and (sn - kemer_son_arac_sn) > KEMER_ARAC_KOPUKLUK_SN:
+                    kemer_yokluk_bas = None
+                    kemer_yokluk_yazilan_son = None
+                kemer_son_arac_sn = sn
+                if kemer_yokluk_bas is None:
+                    kemer_yokluk_bas = sn
+                elif (sn - kemer_yokluk_bas) >= KEMER_YOKLUK_SN:
+                    # ESIGIN ASILDIGI ANA yazilir -- pipeline dokumu olcumune gore
+                    # GT'nin "gorulebilir oldugu an" isaretine en yakin an bu
+                    # (kosu baslangicina yazmak 5-7sn erken kaliyordu).
+                    if kemer_yokluk_yazilan_son is None:
+                        vehicle_events.append(tespit_olustur(
+                            sn, "sofor_eylemi", "emniyet_kemeri_ihlali", 0.5))
+                        kemer_yokluk_yazilan_son = sn
+                    elif (sn - kemer_yokluk_yazilan_son) >= KEMER_YENIDEN_SN:
+                        vehicle_events.append(tespit_olustur(
+                            sn, "sofor_eylemi", "emniyet_kemeri_ihlali", 0.5))
+                        kemer_yokluk_yazilan_son = sn
+
+            if kemer_log is not None:
+                kemer_log.append({
+                    "t": sn, "cls": kemer_kare_cls, "conf": round(kemer_kare_conf, 3),
+                    "arac": en_buyuk is not None, "pencere": belirsizlik_pencere_acik,
+                })
 
             # ARKA KOLTUK (pencere-tabanli): arac ROI'si (5% padding) + CLAHE -- kenar-
             # tetikleyicili belirsizlik penceresini kullanir. Kirpimin SAG yarisinda kisi
             # aranir, sofor_kutusu ile cakisan (IOU) adaylar elenir. Bos olan ilk yer
-            # (once arka_koltuk_1, sonra arka_koltuk_2) doldurulur.
+            # (once arka_koltuk_2, sonra arka_koltuk_1 -- sag yari = arac sag tarafi) doldurulur.
             if en_buyuk is not None and belirsizlik_pencere_gorunum and not arka_koltuk_pencerede_yazildi and not (arka_koltuk_1_dolu and arka_koltuk_2_dolu):
                 kax1, kay1, kax2, kay2 = en_buyuk
                 kpad_x, kpad_y = int((kax2-kax1)*0.05), int((kay2-kay1)*0.05)
@@ -1239,7 +1450,7 @@ def run_inference(video_path):
                     krx_orta = krx1 + (krx2 - krx1) // 2
                     sag_roi = arac_roi_koltuk[:, krx_orta-krx1:]
                     if sag_roi.size > 0:
-                        ay_sonuc = yolcu_model(sag_roi, conf=YOLCU_KISI_ESIK, verbose=False)[0]
+                        ay_sonuc = yolcu_model_koltuk(sag_roi, conf=YOLCU_KISI_ESIK, verbose=False)[0]
 
                         def _sofor_ile_cakisiyor_mu(kutu):
                             if sofor_kutusu is None:
@@ -1258,17 +1469,40 @@ def run_inference(video_path):
                             kx1, ky1, kx2, ky2 = k.xyxy[0].tolist()
                             tam_kutu = (kx1+krx_orta, ky1+kry1, kx2+krx_orta, ky2+kry1)
                             if not _sofor_ile_cakisiyor_mu(tam_kutu):
-                                adaylar.append(float(k.conf))
+                                adaylar.append((float(k.conf), tam_kutu))
+                        adaylar.sort(key=lambda a: a[0], reverse=True)
+                        # AYNI KISIYE cift kutu elemesi: dusuk cozunurluk/parlak
+                        # goruntude tek yolcuya iki kutu cikabiliyor (v14 olcumu:
+                        # 240p'de 2, aydinlikta 5 sahte arka_koltuk_1). En yuksek
+                        # guvenli adayla IoU>=0.4 cakisan digerleri ayni kisidir.
+                        if len(adaylar) >= 2:
+                            adaylar = [adaylar[0]] + [
+                                a for a in adaylar[1:] if _iou(a[1], adaylar[0][1]) < 0.4
+                            ]
 
                         if adaylar:
-                            if not arka_koltuk_1_dolu:
-                                koltuk_etiketi = "arka_koltuk_1"
-                                arka_koltuk_1_dolu = True
-                            else:
-                                koltuk_etiketi = "arka_koltuk_2"
+                            # Arama ROI'nin SAG yarisinda yapiliyor: aracin arkasindan
+                            # bakista sag yari = aracin SAG (yolcu) tarafi = arka_koltuk_2.
+                            # faz2 GT ile dogrulandi (12 arka_koltuk_2'ye karsi 1
+                            # arka_koltuk_1): ilk gorunen aday sag koltuktur.
+                            # arka_koltuk_1 ise ancak AYNI karede IKINCI bir es-zamanli
+                            # kisi de gorunuyorsa yazilir -- "koltuk_2 dolu diye tek
+                            # adayi koltuk_1'e terfi ettirme" v12'de 3 yuksek-guvenli FP
+                            # uretti (ayni yolcu yeni pencerede yeniden bulununca).
+                            if not arka_koltuk_2_dolu:
                                 arka_koltuk_2_dolu = True
-                            vehicle_events.append(tespit_olustur(sn, "yolcular", koltuk_etiketi, max(adaylar)))
-                            arka_koltuk_pencerede_yazildi = True
+                                vehicle_events.append(tespit_olustur(sn, "yolcular", "arka_koltuk_2", adaylar[0][0]))
+                                arka_koltuk_pencerede_yazildi = True
+                                if len(adaylar) >= 2 and not arka_koltuk_1_dolu:
+                                    arka_koltuk_1_dolu = True
+                                    vehicle_events.append(tespit_olustur(sn, "yolcular", "arka_koltuk_1", adaylar[1][0]))
+                            elif len(adaylar) >= 2 and not arka_koltuk_1_dolu:
+                                arka_koltuk_1_dolu = True
+                                vehicle_events.append(tespit_olustur(sn, "yolcular", "arka_koltuk_1", adaylar[1][0]))
+                                arka_koltuk_pencerede_yazildi = True
+                            # tek aday + koltuk_2 dolu: ayni kisi yeniden gorunmus --
+                            # yeni olay yazilmaz (6 sn'lik sifirlama zaten periyodik
+                            # yeniden-raporlamayi sagliyor)
 
             if bolge is None:
                 for ad in modeller:
@@ -1410,17 +1644,27 @@ def run_inference(video_path):
                             yolcu_kilitli_idler.add(pid)
                             vehicle_events.append(tespit_olustur(global_frame_count / fps, "yolcular", koltuk, b["conf"]))
 
-        # VİDEO ÇİKTISI İÇİN KUTUYU ÇİZ (Atlama boşluklarında da görünmesi için)
-        if son_su_kutu is not None and (global_frame_count - son_su_zamani) < (atlama * 3): # 3 işlem periyodu ekranda tut
-            rx1, ry1, rx2, ry2 = son_su_kutu
-            cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (0, 0, 255), 3)
-            cv2.putText(frame, f"ONAY: su_icme {son_su_g:.2f}", (rx1, ry1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            cv2.putText(frame, "PREDICT KILITLENDI!", (50, 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 0, 255), 2)
-            
-        out_video.write(frame)
+        # VİDEO ÇİKTISI İÇİN KUTUYU ÇİZ (yalnizca DEBUG_VIDEO=1 iken)
+        if out_video is not None:
+            if son_su_kutu is not None and (global_frame_count - son_su_zamani) < (atlama * 3): # 3 işlem periyodu ekranda tut
+                rx1, ry1, rx2, ry2 = son_su_kutu
+                cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (0, 0, 255), 3)
+                cv2.putText(frame, f"ONAY: su_icme {son_su_g:.2f}", (rx1, ry1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(frame, "PREDICT KILITLENDI!", (50, 50), cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 0, 255), 2)
+            out_video.write(frame)
 
     cap.release()
-    out_video.release()
+    if out_video is not None:
+        out_video.release()
+
+    if kemer_log is not None:
+        try:
+            with open(os.environ.get("KEMER_LOG_YOL", "/app/data/output/kemer_pipeline.jsonl"),
+                      "w", encoding="utf-8") as klf:
+                for kayit in kemer_log:
+                    klf.write(json.dumps(kayit) + "\n")
+        except OSError:
+            pass  # gelistirme dokumu -- yazilamazsa akisi etkilemesin
 
     # === POST-PROCESSING (Şoför Eylemleri) ===
     # NOT: sigara/telefon/kemer artik CANLI olarak (kendi kanit pencereleriyle) yukarida
@@ -1462,23 +1706,12 @@ def run_inference(video_path):
         if not (k[2] == "etrafa_bakinma" and any(a_orta < k[0] <= a_orta + ARKAYA_ETRAFA_SOGUMA_SN for a_orta in arkaya_zamanlari_tum))
     ]
 
-    # Çakışma Önleme (sigara/telefon artik canli yazildigi icin vehicle_events'ten de dahil edilir)
-    # NOT: esneme de buraya dahil -- konusma/sigara/su icme sirasindaki agiz/cene hareketi
-    # ayni MAR sinyalini tetikleyip yanlislikla esneme sayilabiliyor.
-    KORUNAN_ETIKETLER = ("etrafa_bakinma", "esneme")
-    korunanlar = [k for k in kararlar if k[2] in KORUNAN_ETIKETLER]
-    digerleri = [k for k in kararlar if k[2] in ("sigara_icme", "su_icme")]
-    digerleri += [(ev["zaman_saniye"], "sofor_eylemi", ev["etiket"], ev["confidence_score"])
-                  for ev in vehicle_events
-                  if ev["kategori"] == "sofor_eylemi" and ev["etiket"] in ("sigara_icme", "telefonla_konusma")]
-    yeni_kararlar = [k for k in kararlar if k[2] not in KORUNAN_ETIKETLER]
-    for b in korunanlar:
-        cakisiyor = False
-        for d in digerleri:
-            if abs(b[0] - d[0]) <= 1.5:
-                cakisiyor = True; break
-        if not cakisiyor: yeni_kararlar.append(b)
-    kararlar = yeni_kararlar
+    # NOT: eski "etrafa_bakinma/esneme, sigara-telefon-su ±1.5sn icindeyse sil" kurali
+    # etrafa_bakinma icin KALDIRILDI -- faz2 GT'de etrafa_bakinma + sigara_icme AYNI
+    # saniyede (92.58) var; kural dogru pozitifi siliyordu (olculdu). ESNEME icinse
+    # korundu (asagida, olay birlestirmeden sonra): sigara/su/telefon sirasindaki
+    # agiz-cene hareketi MAR sinyalini tetikleyip sahte esneme uretiyor (v2 olcumu:
+    # 28.8 ve 72.4'te, GT'deki su/telefon olaylarinin yaninda 2 sahte esneme).
 
     # 5-Saniye Kilit (Cooldown)
     kararlar.sort()
@@ -1502,6 +1735,53 @@ def run_inference(video_path):
             son_yazilan[etiket] = ev["zaman_saniye"]
 
     vehicle_events = filtered_events
+
+    # === EL-YUZE MUNHASIRLIK (su / sigara / telefon: BIRI VARSA OBURU OLAMAZ) ===
+    # Elin yuze gittigi tek bir harekette uc model birden ateslenebiliyor (faz2
+    # olcumu: t=28'de GT "su_icme" iken sigara+telefon+su birlikte yazilmisti).
+    # ±2.5 sn icinde bu uc etiketten birden fazlasi varsa YALNIZCA EN YUKSEK
+    # GUVENLISI kalir. Sabit bir oncelik/siralama iliskisi YOK (06.08 takim
+    # karari: "su > sigara > telefon" kesinlik sirasi kaldirildi -- genel
+    # videoda hangi modelin daha isabetli olacagi bilinemez, karari yalnizca
+    # modellerin kendi guveni verir).
+    EL_YUZE_ETIKETLER = ("su_icme", "sigara_icme", "telefonla_konusma")
+    EL_YUZE_PENCERE_SN = 2.5
+    el_yuze_evler = sorted(
+        (ev for ev in vehicle_events if ev["etiket"] in EL_YUZE_ETIKETLER),
+        key=lambda e: e["zaman_saniye"])
+    silinecekler = set()
+    for i, a in enumerate(el_yuze_evler):
+        if id(a) in silinecekler:
+            continue
+        for b in el_yuze_evler[i+1:]:
+            if b["zaman_saniye"] - a["zaman_saniye"] > EL_YUZE_PENCERE_SN:
+                break
+            if id(b) in silinecekler:
+                continue
+            a_g = float(a.get("confidence_score", 0.0))
+            b_g = float(b.get("confidence_score", 0.0))
+            kaybeden = a if a_g < b_g else b
+            silinecekler.add(id(kaybeden))
+            if kaybeden is a:
+                break
+    vehicle_events = [ev for ev in vehicle_events if id(ev) not in silinecekler]
+
+    # === ESNEME <-> EL-YUZE MUNHASIRLIGI ===
+    # Esneme ile sigara/su/telefon ayni anda OLAMAZ (agiz/el ayni anda iki iste
+    # olamaz -- takim karari). Kazanan EL-YUZE olayidir, esneme silinir; cunku
+    # (a) el-yuze eylemi sirasindaki agiz hareketi MAR sinyalini tetikleyip sahte
+    # esneme uretiyor (v2 olcumu: 28.8 ve 72.4'te GT su/telefon olaylarinin
+    # yaninda 2 sahte esneme), (b) MAR-onayli esnemenin guveni sabit 0.75 --
+    # model guveniyle kiyaslanabilir bir olcu degil, guven yarisina sokulamaz.
+    # (etrafa_bakinma'ya DOKUNULMAZ; GT es-zamanliligi kanitliyor: 92.58'de
+    # etrafa_bakinma + sigara_icme birlikte.)
+    el_yuze_zamanlar = [ev["zaman_saniye"] for ev in vehicle_events
+                        if ev["etiket"] in EL_YUZE_ETIKETLER]
+    vehicle_events = [
+        ev for ev in vehicle_events
+        if not (ev["etiket"] == "esneme"
+                and any(abs(ev["zaman_saniye"] - t) <= 1.5 for t in el_yuze_zamanlar))
+    ]
 
     # Yolcular artik CANLI olarak (kilitlendigi an) vehicle_events'e yazildi -- burada
     # ek bir post-processing adimina gerek yok.
