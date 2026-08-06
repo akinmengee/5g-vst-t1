@@ -62,9 +62,17 @@ class AracBilgisi(BaseModel):
         if v == "":
             # Tespit edilemedi durumu (main.py'deki boş-çıktı fallback'iyle uyumlu)
             return v
-        if not _PLAKA_REGEX.fullmatch(v):
+        # FTR dokümanının regex'i harflerin etrafında boşluğa VE küçük harfe
+        # izin veriyor (`\s?[a-zA-Z]\s?`) — AI'nin OCR çıktısı "34 tc 8532"
+        # gibi gelebilir, bu geçerli bir plaka. Reddetmek yerine normalize
+        # ediyoruz (FTR dokümanı madde 5.3'ün önerdiği gibi): hem canlı
+        # demo'da backend'in gereksiz yere 500 dönüp AI'nin doğru çalıştığı
+        # bir sonucu göstermemesini engelliyor, hem mobildeki plaka
+        # rozetine temiz bir metin gidiyor.
+        normalize = v.replace(" ", "").upper()
+        if not _PLAKA_REGEX.fullmatch(normalize):
             raise ValueError(f"'{v}' geçerli bir plaka formatı değil (örn: 34ABC123)")
-        return v
+        return normalize
 
 
 class SonucJson(BaseModel):

@@ -135,6 +135,16 @@ class _JobList extends StatelessWidget {
   }
 }
 
+/// Tam job_id (36 karakterlik UUID) bu dar satırda `Expanded` metni
+/// karakter karakter satır kırdırıyordu (Row, Expanded'a kalan yeri en son
+/// veriyor — sınırsız genişlikteki bu Text önce tüm satırı yiyordu). Liste
+/// satırında yalnızca kısa bir önizleme yeterli; tam kimlik zaten burada
+/// gösterilmiyordu (detay ekranında da yok), o yüzden bilgi kaybı yok.
+String _kisaJobId(String? jobId) {
+  if (jobId == null || jobId.isEmpty) return '';
+  return jobId.length > 8 ? '${jobId.substring(0, 8)}…' : jobId;
+}
+
 class _JobRow extends StatelessWidget {
   final RecordingItem item;
   final VoidCallback onTap;
@@ -195,7 +205,7 @@ class _JobRow extends StatelessWidget {
               ),
             ),
             Text(
-              item.jobId ?? '',
+              _kisaJobId(item.jobId),
               style: const TextStyle(
                 fontFamily: AppTheme.monoFamily,
                 fontSize: 10,

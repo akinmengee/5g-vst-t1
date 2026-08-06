@@ -292,3 +292,73 @@ düzeltme kararı alırken birlikte okumalı:
   puan), erken tespitte %10'a kadar bonus ("look-ahead" penceresi).
 
 Bu maddelerin tam metni ve gerekçesi `PLAN.md`'de.
+
+## 6 Ağustos (devam) — "AI Sonucu" ekranında karakter karakter kırılan metin
+
+Ekip arkadaşımızın ekran görüntüsüyle bildirdiği bug: "AI Sonuçları" iş
+listesindeki satırda "HH:MM:SS kaydı" metni karakter karakter alt satıra
+düşüyordu (ekran görüntüsünde "2/3/:5/5/:2/3" ve "k/a/y/d/ı" şeklinde).
+
+**Dosya:** `mobile/lib/screens/ai_result_screen.dart:138-212` (`_JobRow`).
+
+**Kök neden:** `item.jobId` (backend'in verdiği 36 karakterlik UUID),
+`Row`'da `Expanded` sarmalayıcısından SONRA, hiçbir genişlik kısıtı
+olmadan `Text` olarak render ediliyordu. Flutter'ın Row yerleşimi,
+esnek olmayan çocukları önce doğal genişliklerinde ölçüyor, `Expanded`'a
+kalan yeri en son veriyor — dar bir telefon ekranında bu UUID satırın
+büyük kısmını yiyor, `Expanded` içindeki "HH:MM:SS kaydı" metnine kalan
+yer tek bir kelimeyi bile sığdıramayacak kadar daralıyor, Flutter da tek
+tek karakterleri alt satıra düşürüyordu.
+
+**Düzeltme:** liste satırında tam UUID zaten hiçbir işe yaramıyordu
+(detay ekranında da gösterilmiyor) — `_kisaJobId()` yardımcı fonksiyonu
+eklendi, ilk 8 karakter + "…" gösteriliyor.
+
+**Test:** `mobile/test/ai_result_job_row_test.dart` (yeni, 2 test) —
+430px genişlikte bir viewport'ta gerçek `AiResultTab` widget ağacı
+kuruluyor, uzun jobId'li bir iş ekleniyor, "HH:MM:SS kaydı" metninin
+render yüksekliğinin tek satıra karşılık geldiği (< 24px) ve tam UUID'nin
+ekranda hiç görünmediği doğrulanıyor.
+
+## 6 Ağustos (devam) — backend'in plaka regex'i FTR spec'ten fazla sıkıydı
+
+PDF-PDF sistematik doğrulama sırasında bulundu (FTR Aşaması Teslim
+Dokümantasyonu, dosya adı yanıltıcı şekilde "docker format.pdf").
+
+**Dosya:** `backend/app/schemas/detection.py:29-31` (`_PLAKA_REGEX`).
+
+**Kök neden:** FTR dokümanının plaka regex'i harflerin etrafında opsiyonel
+boşluğa VE küçük harfe izin veriyor (`\s?[a-zA-Z]\s?`). Bizim regex'imiz
+yalnızca bitişik + büyük harf kabul ediyordu (`[A-Z]`, boşluksuz) —
+dokümandan kod yazılırken bilinçsizce sıkılaştırılmış.
+
+**Somut senaryo:** AI'nin plaka OCR çıktısı "34 tc 8532" gibi (boşluklu/
+küçük harfli — fiziksel plakada harflerle rakamlar zaten ayrık olduğu için
+gerçekçi bir OCR çıktısı) gelirse: FTR spec'ine göre geçerli, ama eski
+kodumuz Pydantic `ValidationError` fırlatıyor, `routes_videos.py` bunu
+yakalayıp HTTP 500 döndürüyordu. **Resmi hakem puanlamasını etkilemiyordu**
+(hakem AI'nin ürettiği results.json'ı bizim backend'imizden geçirmeden
+kendi scriptiyle okuyor) — ama **canlı demo'yu (%25 puan) etkiliyordu**:
+AI doğru çalışsa bile mobil ekranda sonuç hiç görünmeyecekti.
+
+**Düzeltme:** regex'i gevşetmek yerine, doğrulamadan ÖNCE normalize
+ediliyor (boşluklar silinip büyük harfe çevriliyor) — FTR dokümanı madde
+5.3'ün önerdiği yaklaşım. Regex kendisi hâlâ sıkı (geçersiz il kodu/desen
+hâlâ reddediliyor), sadece boşluk/harf-durumu artık normalize ediliyor.
+
+**Test:** `backend/tests/test_detection_schema.py` (yeni, 7 test) —
+"34 tc 8532" → "34TC8532", zaten temiz plaka değişmiyor, geçersiz plaka
+hâlâ reddediliyor, boş plaka ("tespit edilemedi") dokunulmadan kalıyor.
+Backend suite 39/39 → 46/46.
+
+Aynı geçişte `AracTipi` (araç gövde tipi listesi) de FTR dokümanıyla
+karşılaştırıldı — birebir aynı, sorun yok.
+
+**Yan bulgu (bug DEĞİL, doğrulanmadı):** Test 400px genişlikte
+kurulduğunda `_JobList`'in üst başlık satırında (`ai_result_screen.dart:104`,
+"AI Sonuçları · N video") da bir taşma (overflow) çıktı. Bu muhtemelen
+test ortamının özel fontu (Inter) yüklemeden yedek fontla ölçmesinden
+kaynaklanıyor (`flutter_test_config.dart` yok) — gerçek cihazda
+doğrulanmadı, bu yüzden burada "çözüldü" değil "gözden geçirilmesi iyi
+olur" olarak not düşüyorum. Test bilerek 430px'e genişletilip bu ayrı
+konu bypass edildi.

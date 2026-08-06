@@ -80,30 +80,37 @@ zaman gerçek `ai/` imajına gider.
 
 ```text
 5g-vst-t1/
-├── PLAN.md, README.md
-├── ai/                     # Hakemin çalıştıracağı Docker imajı
+├── PLAN.md                 # Mimari kararlar, yol haritası, açık riskler — TEK doğruluk kaynağı
+├── note.md                 # Kod inceleme / bug düzeltme geçmişi (kronolojik)
+├── README.md
+├── ai/                     # Hakemin çalıştıracağı Docker imajı (teknofest-2026/vst-t1)
 │   ├── main.py, Dockerfile, requirements.txt
 │   ├── src/predict.py, utils.py
 │   └── weights/            # Model ağırlıkları (git'e girmez)
 ├── backend/                # FastAPI orkestrasyon katmanı
+│   ├── Dockerfile          # Backend'in kendi imajı (vst-t1-backend, teknofest-2026/ öneksiz)
 │   └── app/api/, services/network/, services/orchestration/
-├── mobile/                 # Flutter uygulaması
-│   └── lib/
-└── docs/
-    ├── mobile-integration.md   # Backend ↔ mobil sözleşmesi
-    └── ai-integration.md       # Backend ↔ AI sözleşmesi
+└── mobile/                 # Flutter uygulaması
+    └── lib/
 ```
+
+Not: `docs/mobile-integration.md` / `docs/ai-integration.md` 6 Ağustos'ta
+kaldırıldı — sözleşmeler artık kod + testlerle kanıtlanıyor (bkz. `PLAN.md`
+"Neden Mimari Değişti").
 
 ## Başlarken
 
 Her parçanın kendi kurulum/çalıştırma talimatı kendi klasöründe:
 
-- **Backend:** [`backend/README.md`](./backend/README.md) — `uvicorn
-  app.main:app --reload`, ortam değişkenleri, test komutları.
-- **Mobil:** [`mobile/README.md`](./mobile/README.md) ve
-  [`mobile/CLAUDE.md`](./mobile/CLAUDE.md) — `flutter run
-  --dart-define=BACKEND_URL=...`, bilinen platform kısıtları (Windows
-  masaüstünde NV WebView test edilemez).
+- **Backend:** [`backend/README.md`](./backend/README.md) — yerel
+  `uvicorn app.main:app --reload` ile ya da kendi Docker imajıyla
+  (`backend/Dockerfile`, VM'de kullanılan yöntem) çalıştırılabilir; ortam
+  değişkenleri, endpoint listesi, test komutları orada.
+- **Mobil:** [`mobile/README.md`](./mobile/README.md) — `flutter run
+  --dart-define=BACKEND_URL=...` (+ `--dart-define=HLS_URL=...` final
+  günü stream adresi değişirse), bilinen platform kısıtları (Windows
+  masaüstünde NV WebView test edilemez — `webview_flutter` yalnızca
+  Android/iOS destekliyor).
 - **AI:** `docker build -t teknofest-2026/vst-t1:latest ai/` ile imaj
   build edilir; çalışma sözleşmesi, açık riskler ve doğrulama durumu
   [`PLAN.md`](./PLAN.md)'de.
@@ -124,19 +131,30 @@ flutter run --dart-define=BACKEND_URL=http://localhost:8000
 ## Durum ve Yol Haritası
 
 - [x] **Backend ↔ Mobil** — NV/QoD/video akışının tamamı gerçek HTTP ile
-  uçtan uca doğrulandı.
-- [x] **AI imajı** — build alıyor, GPU'da çalışıyor, gerçek yarışma
-  videosundan şema-geçerli sonuç üretiyor.
+  uçtan uca doğrulandı (yerelde, VM'de bare process olarak, VM'de
+  container olarak — üçü de birebir aynı sonuç).
+- [x] **AI imajı** — build alıyor, GPU'da (Tesla T4) çalışıyor, gerçek
+  yarışma videosundan şema-geçerli sonuç üretiyor.
 - [x] **Uçtan uca** — mobil servis kodu → backend → gerçek AI imajı →
   sonuç zinciri baştan sona kanıtlandı.
-- [ ] **VM doğrulaması** — imaj boyutu (rebuild + ölçüm yapıldı: 10.8GB →
-  9.19GB, limit 8GB — hâlâ ~1.2GB fazla, detay `PLAN.md`) ve çalışma süresi
-  (578sn, limit 600sn) gerçek donanımda (Tesla T4) yeniden ölçülecek.
-- [ ] **7 Ağustos** — gerçek Turkcell erişimi açılınca `USE_MOCK_5G=false`
-  ile tam kuru prova + imaj dondurma.
+- [x] **Backend, kendi Docker imajı olarak VM'de çalışıyor**
+  (`vst-t1-backend`, `teknofest-2026/` öneksiz), `--restart
+  unless-stopped` ile çökme/reboot sonrası kendiliğinden ayağa kalkıyor —
+  gerçek bir çökme simüle edilerek doğrulandı.
+- [x] **VM doğrulaması (Faz C) 4/4 tamamlandı** — organizasyonun Web
+  UI'ından proje oluşturulup Execute çalıştırıldı, `EXECUTION COMPLETED –
+  status: SUCCESS` alındı. İmaj boyutu için resmî bir sınır **yok**
+  (önceki "8GB FTR limiti" iddiası yalnızca FTR-fazına özel bir
+  dokümandan geliyordu, Final'e uygulanmıyor — organizasyon Q&A'sinde
+  netleşti). Çalışma süresi rahat (1080p için 436sn, limit 600sn) —
+  gerçek stream'de zaten 4K yok, yalnızca 1080p/240p.
+- [ ] **Turkcell `client_id`/`secret`** — organizasyondan hâlâ gelmedi.
+- [ ] **7 Ağustos 21:00** — AI imajı dondurulup SHA256 alınacak; sonra
+  gerçek Turkcell erişimi açılınca `USE_MOCK_5G=false` ile tam kuru prova.
 
-Detaylı yol haritası, açık riskler ve gerekçeler için bkz.
-**[`PLAN.md`](./PLAN.md)**.
+Detaylı yol haritası, açık riskler, organizasyon Q&A netleştirmeleri ve
+PDF-PDF sistematik doğrulama sonuçları için bkz. **[`PLAN.md`](./PLAN.md)**;
+düzeltilen bug'ların dosya/satır referanslı kaydı için **[`note.md`](./note.md)**.
 
 ## Takım
 
@@ -152,8 +170,10 @@ Detaylı yol haritası, açık riskler ve gerekçeler için bkz.
 ## Daha Fazla Bilgi
 
 - **[`PLAN.md`](./PLAN.md)** — mimari kararlar, gerekçeler, tamamlanan
-  işler, yol haritası, açık riskler, doğrulama planı.
+  işler, yol haritası, açık riskler, organizasyon Q&A netleştirmeleri,
+  doğrulama planı.
+- **[`note.md`](./note.md)** — düzeltilen/açık bug'ların dosya:satır
+  referanslı, kronolojik kaydı.
 - **[`backend/README.md`](./backend/README.md)**,
-  **[`mobile/README.md`](./mobile/README.md)**,
-  **[`mobile/CLAUDE.md`](./mobile/CLAUDE.md)** — parçaya özel kurulum ve
-  bilinen kısıtlar.
+  **[`mobile/README.md`](./mobile/README.md)** — parçaya özel kurulum,
+  endpoint'ler, ortam değişkenleri ve bilinen kısıtlar.

@@ -41,11 +41,7 @@ Endpoint'ler:
 
 ```bash
 cd backend
-python -m pytest tests/ -v
-# Yalnızca yeni backend testleri (ML bağımlılığı gerektirmez):
-python -m pytest tests/test_routes_auth.py tests/test_routes_qod.py \
-  tests/test_routes_videos.py tests/test_flow_registry.py \
-  tests/test_job_registry.py tests/test_ai_runner.py tests/test_turkcell_client.py
+python -m pytest -q   # 46 test, hiç ML bağımlılığı gerektirmez
 ```
 
 ## Ortam değişkenleri (`.env` veya shell)
@@ -139,9 +135,14 @@ ayağa kalkmasını sağlıyor — daha önceki çıplak `nohup` sürecinin eksi
 - [x] Sahte AI çalıştırıcı KALDIRILDI — video her zaman gerçek `ai/` imajına gider
 - [x] Mobil ↔ backend uçtan uca gerçek HTTP ile doğrulandı
 - [x] Eski edge-AI/WebSocket mimarisi backend'den tamamen kaldırıldı
-- [ ] `ai/` imajı: `batch_main.py` + Dockerfile (ayrı faz — plan P0)
-- [x] VM'de backend + AI imajı doğrulaması (Tesla T4, uvicorn process,
-      çalışma süresi/imaj boyutu ölçümü)
-- [ ] Hakemin kendi Web UI'ının aynı imajı bağımsız çalıştırıp SUCCESS
-      vermesi (7 Ağustos 21:00 son teslim tarihine kadar)
-- [ ] Gerçek Turkcell ile canlı test (`USE_MOCK_5G=false`)
+- [x] `ai/` imajı build alıyor, GPU'da (Tesla T4) çalışıyor, şema-geçerli
+      sonuç üretiyor
+- [x] VM'de backend + AI imajı doğrulaması (uvicorn process, sonra
+      container, çalışma süresi/imaj boyutu ölçümü)
+- [x] Backend kendi Docker imajı olarak VM'de çalışıyor,
+      `--restart unless-stopped` ile crash-recovery doğrulandı
+- [x] Hakemin kendi Web UI'ından Execute çalıştırılıp
+      `EXECUTION COMPLETED – status: SUCCESS` alındı (Faz C, 6 Ağustos)
+- [ ] AI imajı dondurulup SHA256 (image ID) alınacak (7 Ağustos 21:00'e yakın)
+- [ ] Gerçek Turkcell ile canlı test (`USE_MOCK_5G=false`) — `client_id`/
+      `secret` organizasyondan hâlâ bekleniyor

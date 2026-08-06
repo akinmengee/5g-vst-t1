@@ -26,16 +26,18 @@
   çökme/reboot sonrası kendiliğinden ayağa kalkıyor (gerçek çökme simüle
   edilerek doğrulandı). AI imajında **4K diye bir varyant yok** — gerçek
   stream 1080p/240p'den ibaret, 1080p ölçümü (436 sn) rahat pay bırakıyor.
-  Web UI'a giriş sağlandı (SSH ile aynı kimlik bilgisi işe yaradı) — Execute
-  testi (Faz C madde 4) henüz koşulmadı ama artık engel yok. Bugün ayrıca
+  Web UI'a giriş sağlandı (SSH ile aynı kimlik bilgisi işe yaradı) ve Execute
+  testi de koşuldu — `EXECUTION COMPLETED – status: SUCCESS`, **Faz C artık
+  4/4 tamamlandı** (imaj donmadan önce bir kez daha tekrarlanacak). Bugün ayrıca
   organizasyonla 3 Ağustos Q&A toplantısının 27 sorusu tek tek işlendi (bkz.
   aşağıdaki bölüm) ve bu sırada mobilde iki gerçek açık bulunup düzeltildi:
   Lifebox'a giden videonun zip'lenmeden gitmesi (**diskalifiye riski**
   taşıyordu) ve HLS kaydının ağ koşulundan bağımsız her zaman en yüksek
-  varyantı seçmesi (şartname 4.2 ihlali). Açık kalanlar: **Turkcell
-  `client_id`/`secret` hâlâ gelmedi** (organizasyonun söz verdiği tarihten
-  2 gün geçti, 7 Ağustos 21:00 teslime 1 gün kaldı) ve **hakemin Web UI'dan
-  Execute testi henüz yapılmadı**.
+  varyantı seçmesi (şartname 4.2 ihlali), ve bir üçüncüsü (AI Sonucu
+  listesinde uzun job_id'nin metni karakter karakter kırdırması, saf
+  görsel bug). Açık kalan tek kritik madde: **Turkcell `client_id`/`secret`
+  hâlâ gelmedi** (organizasyonun söz verdiği tarihten 2 gün geçti, 7
+  Ağustos 21:00 teslime 1 gün kaldı).
 - **Neden bu şekilde:** ÖTR'de mimari 92/100 ile övüldü, FTR'de rapor
   90/100 ama kod sadece 19/100 aldı — yani ekibin güçlü yanı tasarım, zayıf
   yanı kodu sağlam ve *gerçekten çalışır* halde teslim etmek. Bu plan
@@ -144,10 +146,13 @@ düşülmez** — bu bilinçli bir deploy-zamanı seçimidir, ortam tespiti değ
 │   └── app/services/orchestration/ # Flow/Job registry, docker run tetikleyici
 │       # (eski app/services/vehicle_ai/ referans kodu kaldırıldı — ai/ VM'de
 │       # kanıtlandığı için referans ihtiyacı bitti, bkz. Bilinen Riskler)
-├── mobile/                 # Flutter uygulaması — takım arkadaşımızın kodu
-│   ├── lib/                       # NV/QoD/video/AI-sonuç ekranları
-│   └── CLAUDE.md                  # Kod üzerinde çalışırken nelere dikkat edilmeli
+└── mobile/                 # Flutter uygulaması — takım arkadaşımızın kodu
+    └── lib/                        # NV/QoD/video/AI-sonuç ekranları
 ```
+
+Not: `mobile/CLAUDE.md` (kod üzerinde çalışırken nelere dikkat edilmeli
+notları) 5 Ağustos'taki mobil sürüm değişikliğinde silindi, henüz yeniden
+oluşturulmadı — repoda şu an yok.
 
 Not: `docs/mobile-integration.md` ve `docs/ai-integration.md` 6 Ağustos'ta
 kaldırıldı — sözleşmeler artık kod + testlerle kanıtlanıyor, ayrı ve kolayca
@@ -245,6 +250,12 @@ gündemine almamış olabileceği, ön koltuk/arka_koltuk_1 doluluk tespitine
 özgü ayrı bir sorun gibi duruyor. Kesin precision/recall için otomatik bir
 skorlama scripti henüz yazılmadı (bkz. Doğrulama Planı).
 
+**Doğrulanan ikinci veri noktası (6 Ağustos, Web UI Execute'i,
+`TOGG_MOBESE_FULL.mp4`):** aynı araç (suv/34TC8532/siyah), 45 tespit,
+`emniyet_kemeri_ihlali` bu sefer **13 kez** (Faz2 testindeki 12'den de
+fazla) — over-detection sorunu farklı bir videoda da aynı şiddette
+tekrarlanıyor, tek seferlik bir ölçüm hatası değil.
+
 ## 🗺️ Yol Haritası — Fazlar
 
 - **Faz A — Mobil ↔ Backend: TAMAMLANDI.** `USE_MOCK_5G=true` + mock-consent
@@ -253,13 +264,20 @@ skorlama scripti henüz yazılmadı (bkz. Doğrulama Planı).
   çalışıyor, gerçek videodan şema-geçerli sonuç üretiyor. AI ekibi
   (sigara/telefon için poz-tabanlı tespit sistemi) algoritmayı aktif
   geliştirmeye devam ediyor.
-- **Faz C — VM Doğrulaması: 3/4 TAMAMLANDI.** Organizasyonun verdiği VM'de:
-  (1) backend düz `uvicorn` process'i olarak ayağa kaldırıldı ✅, (2) AI
-  imajı build edilip Tesla T4'te gerçek süre ölçüldü ✅ (limitin belirgin
-  altında, aşağıda detaylı), (3) imaj boyutu temizlik sonrası VM'de yeniden
-  ölçüldü ✅. **(4) hakemin Web UI'sinin aynı imajı `TOGG_MOBESE_FULL.mp4`
-  ile çalıştırıp `EXECUTION COMPLETED – status: SUCCESS` verdiği doğrulaması
-  henüz yapılmadı** — 7 Ağustos 21:00 son teslim tarihine kadar planlanıyor.
+- **Faz C — VM Doğrulaması: 4/4 TAMAMLANDI (6 Ağustos).** Organizasyonun
+  verdiği VM'de: (1) backend düz `uvicorn` process'i olarak ayağa
+  kaldırıldı ✅ (sonradan container'a taşındı, bkz. Tamamlanan İşler), (2)
+  AI imajı build edilip Tesla T4'te gerçek süre ölçüldü ✅, (3) imaj boyutu
+  temizlik sonrası VM'de yeniden ölçüldü ✅, (4) **Web UI'dan proje
+  oluşturulup `TOGG_MOBESE_FULL.mp4` ile Execute çalıştırıldı, `EXECUTION
+  COMPLETED – status: SUCCESS` alındı** ✅ — sonuç, backend'in `SonucJson`
+  şemasıyla birebir uyumlu (45 tespit, araç bilgisi doğru). **Not:** bu,
+  o anki imaja (6 saat önce build edilmiş) karşı yapıldı; AI ekibi imajı
+  güncelledikçe bu doğrulama eskir — **7 Ağustos 21:00'e yakın, imaj
+  donmadan hemen önce bir kez daha tekrarlanmalı**, asıl teslim edilecek
+  imaj için. `TOGG_MOBESE_FULL.mp4`'ün gerçek 4K (3840x2160) olduğu ve
+  AI kodunun bu video için otomatik `atlama=4` (kare atlama) uyguladığı
+  görüldü — süre ölçümü bu koşuşta paylaşılmadı, teyit edilmeli.
 - **Faz D — 7 Ağustos: Gerçek Ortam + Dondurma: BEKLEMEDE.** Gerçek
   `TURKCELL_CLIENT_ID/SECRET` + kayıtlı `TURKCELL_REDIRECT_URI` ile
   `USE_MOCK_5G=false`; gerçek telefon + gerçek SIM + hücresel veri ile tam
@@ -288,17 +306,15 @@ skorlama scripti henüz yazılmadı (bkz. Doğrulama Planı).
   şimdilik değiştirilmesine gerek yok gibi duruyor — final videosunun
   gerçek uzunluğu organizasyon tarafından belirtilmedi (bizim test
   videomuz ~114 sn), daha uzun çıkarsa bu risk yeniden değerlendirilmeli.
-- **Çözüldü — Web UI'a giriş sağlandı.** İlk başta "ayrı bir kimlik bilgisi
-  gerekiyor, henüz verilmedi" sanılıyordu; meğer organizasyonun asıl
-  mailindeki tek USERNAME/PASSWORD çifti (SSH ile aynı) Web UI için de
-  geçerliymiş — Operasyon Rehberi'nin "SSH ayrı, Web UI ayrı" ifadesi iki
-  farklı ERİŞİM YÖNTEMİni anlatıyormuş, iki ayrı kimlik bilgisi setini
-  değil. `http://<VM_IP>` (http, https değil) üzerinden giriş 6 Ağustos'ta
-  doğrulandı. **Kalan iş (Faz C, madde 4):** `TOGG_MOBESE_FULL.mp4` ile bir
-  Execute çalıştırıp "EXECUTION COMPLETED – status: SUCCESS" görmek —
-  organizasyon Q&A'sinde bunun canlı demo'dan (otomatik mobil→backend→AI
-  zinciri) AYRI, offline bir değerlendirme adımı olduğu netleşti (bkz.
-  aşağıdaki Q&A bölümü, madde 13/24), henüz koşulmadı.
+- ~~Web UI'a giriş bilgisi eksik~~ **tamamen çözüldü (6 Ağustos).** İlk
+  başta "ayrı bir kimlik bilgisi gerekiyor, henüz verilmedi" sanılıyordu;
+  meğer organizasyonun asıl mailindeki tek USERNAME/PASSWORD çifti (SSH ile
+  aynı) Web UI için de geçerliymiş — Operasyon Rehberi'nin "SSH ayrı, Web
+  UI ayrı" ifadesi iki farklı ERİŞİM YÖNTEMİni anlatıyormuş, iki ayrı
+  kimlik bilgisi setini değil. Giriş yapıldı, `TOGG_MOBESE_FULL.mp4` ile
+  Execute çalıştırıldı, **"EXECUTION COMPLETED – status: SUCCESS" alındı**
+  — Faz C madde 4 tamamlandı (detay: Tamamlanan İşler / Yol Haritası).
+  Yalnızca imaj donmadan hemen önce aynı imajla bir kez daha tekrarlanmalı.
 - **Gerçek Turkcell hiç canlı test edilmedi** — yalnızca request-shape
   testleri (`test_turkcell_client.py`) ve mock-consent köprüsü var. **Netleşti
   (organizasyon Q&A, 3 Ağustos toplantısı):** `TURKCELL_CLIENT_ID`/`SECRET`
@@ -435,6 +451,78 @@ tarafından sağlanıyor (kullanıcının tahmini: Cuma).
 
 Tam 27 maddenin ham notu (kim ne dedi, birebir) oturumun scratchpad
 dosyasında; bu bölüm onun işlenmiş özeti.
+
+## PDF-PDF Sistematik Doğrulama (6 Ağustos)
+
+Elimizdeki resmi dokümanlar tek tek okunup mevcut sistemle karşılaştırıldı
+— amaç, "dokümana aykırı bir şey var mı" (Lifebox zip/HLS varyant gibi)
+tespit etmek.
+
+**Final Yarışma Senaryosu:** Şekil 2/3 mimarisi, puanlama tablosu,
+streaming/Faz2 detayları — hepsi mevcut sistemle uyumlu. Tek incelik:
+doküman "MP4 dosyası... paylaşılacak" diyor, biz (organizasyonun sözlü
+Q&A cevabına dayanarak) ZIP'leyerek paylaşıyoruz — gerçek bir ihlal değil
+(içerik hâlâ MP4, sadece taşıma paketi ZIP), ama yazılı metinle sözlü
+netleştirme arasındaki bu farkı bilerek kayıt altına alıyoruz. Final
+gününden önce organizasyona yazılı teyit almakta fayda var. Madde 4.2
+("ağ koşullarından kaynaklanabilecek gecikmeleri test etmeli ve önlemini
+almalıdır") kontrol edildi — `api_client.dart`'ta `RetryInterceptor`
+(2 deneme, artan gecikme) + video upload'a özel 3 dakikalık `sendTimeout`
+zaten var; kötü ağ koşulunda fiilen test edilmedi ama önlem kodda mevcut.
+
+**Open Gateway Demo UX Kılavuzu:** HLS adaptif bitrate gereksinimini
+(QoD açık→1080p, kapalı→240p) üçüncü kez, en somut haliyle doğruladı —
+bugünkü `hls_variant_service.dart` düzeltmesinin tam isabet olduğunu
+kesinleştirdi. QoD istek gövdesi (`qosProfile: teknofest2026`,
+`applicationServer.ipv4Address: 0.0.0.0/0`) kodda doğru, teyit edildi.
+
+**FTR Aşaması Teslim Dokümantasyonu** (dosya adı yanıltıcı: "docker
+format.pdf" — içerik FTR spec'inin ta kendisi): iki önemli bulgu:
+1. **Plaka regex'i bizim backend'de fazla sıkıymış, düzeltildi** —
+   detay `note.md`'de. Backend testleri 39→46.
+2. **Anti-cheat kuralı (madde 5.4) — AI ekibiyle teyit edilmeli:**
+   *"Submission içerisinde; ortam değişkeni, hostname, IP adresi veya
+   dosya varlığı kontrolü gibi yöntemlerle 'değerlendirme ortamında
+   mıyım?' tespiti yapan ve buna göre farklı davranış sergileyen yapılar
+   tespit edilmesi halinde ilgili takımın değerlendirmesi geçersiz
+   sayılacaktır."* `ai/src/predict.py`/`main.py`'de böyle bir ortam-tespit
+   mantığı olmadığından eminiz, ama AI ekibiyle bir kez teyitlenmeli —
+   diskalifiye seviyesinde bir risk. (Bizim backend'imiz zaten bu ilkeye
+   uyuyor — `USE_MOCK_5G` bilinçli bir deploy-zamanı seçimi, sessiz
+   ortam-tespiti değil, bkz. Mimari bölümü.)
+3. Model gürbüzlüğü maddesi ("farklı ışık/parlama durumlarında kararlı
+   çalışmalı") Q&A'deki "aydınlıktan/parlamadan korkun" uyarısını yazılı
+   olarak da doğruluyor — AI ekibine iletilecekler listesini pekiştiriyor.
+4. "İmaj boyutu maksimum 8GB" tablosu burada — bu, sabah kaldırdığımız
+   "8GB FTR limiti" iddiasının orijinal kaynağı, teyit edildi. FTR'ye
+   özel, Final'de geçerli olmadığı organizasyon Q&A'sinde zaten netleşmişti
+   (bkz. Bilinen Riskler) — burada yeniden risk olarak açmıyoruz.
+
+**Postman koleksiyonu + gerçek CAMARA OpenAPI YAML'ları** (`number-
+verification.yaml`, `quality-on-demand.yaml` — Masaüstü'nde bulundu,
+`turkcell_client.py`'nin kendi docstring'inin referans verdiği asıl
+kaynaklar): `turkcell_client.py` satır satır karşılaştırıldı, **temiz
+çıktı, düzeltme gerekmedi.** İki şüpheli nokta araştırılıp kapatıldı:
+- `x-correlator` header'ı kodda yok — YAML'a göre her iki API'de de
+  **opsiyonel** (`required: false`), eksiklik değil.
+- `build_authorize_url()`'daki `prompt=none` parametresi Postman
+  örneğinde yoktu, ama `number-verification.yaml`'ın kendi açıklaması
+  bunu özellikle öneriyor ("prompt=none ensures no user interaction" —
+  NV'nin sessiz/UI'sız doğası gereği). Kod zaten doğru yazılmış.
+- `device` nesnesinin QoD isteğinde gönderilmemesi (3-legged token için)
+  YAML'ın "MUST NOT be provided" kuralıyla birebir eşleşiyor, kod
+  yorumu da bunu doğru açıklıyor.
+
+**Okunmadı, bilerek atlandı:** ÖTR (eski, geçersiz mimariye ait, artık
+konu dışı).
+
+**PDF-PDF tur tamamlandı** — 6 resmi doküman (Final Yarışma Senaryosu,
+Operasyon Rehberi, UX Kılavuzu, FTR/docker format, OGW_Teknofest.pdf
+[önceki bir turda], Postman+YAML) tek tek koda karşı doğrulandı. Bulunan
+3 gerçek düzeltme (Lifebox zip, HLS varyant, plaka regex) uygulandı ve
+test edildi; geri kalanı ya zaten uyumluydu ya da resmî olarak
+netleşmemiş (Turkcell credential'ları, SHA256 ibraz kanalı gibi) dış
+bağımlılıklar.
 
 ## Doğrulama Planı
 
