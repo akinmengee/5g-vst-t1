@@ -261,7 +261,10 @@ class _JobDetail extends StatelessWidget {
 
     final Widget govde;
     if (item.aiStatus == AiResultStatus.processing) {
-      govde = _ProcessingState(startedAt: item.processingStartedAt);
+      govde = _ProcessingState(
+        startedAt: item.processingStartedAt,
+        baglantiSorunu: controller.aiBaglantiSorunu,
+      );
     } else if (item.aiStatus == AiResultStatus.failed) {
       govde = const EmptyState(
         icon: Icons.error_outline,
@@ -766,7 +769,13 @@ String prettyLabel(String? raw) {
 class _ProcessingState extends StatefulWidget {
   final DateTime? startedAt;
 
-  const _ProcessingState({required this.startedAt});
+  /// Arka arkaya birkaç sonuç sorgusu backend'e ulaşamadıysa true. Bu durumda
+  /// "AI çalışıyor" demek YANLIŞ olur: AI çoktan bitmiş olabilir, biz sadece
+  /// öğrenemiyoruzdur (6 Ağustos: iş 7 dk'da bitti, telefon hiç haberdar
+  /// olamadı çünkü bağlantı kopmuştu ve ekran yine "işliyor" diyordu).
+  final bool baglantiSorunu;
+
+  const _ProcessingState({required this.startedAt, this.baglantiSorunu = false});
 
   @override
   State<_ProcessingState> createState() => _ProcessingStateState();
@@ -812,7 +821,7 @@ class _ProcessingStateState extends State<_ProcessingState>
         : (_elapsed.inMilliseconds / maxMs).clamp(0.0, 1.0);
     final asildi = _elapsed >= AppConfig.aiProcessingTimeout;
 
-    final renk = asildi
+    final renk = (asildi || widget.baglantiSorunu)
         ? AppTheme.danger
         : fraction >= 0.7
             ? AppTheme.warning
@@ -860,13 +869,25 @@ class _ProcessingStateState extends State<_ProcessingState>
                 ),
               ),
               const SizedBox(height: 20),
-              const Text('AI videoyu işliyor',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
-              const SizedBox(height: 4),
-              const Text(
-                'Tespitler hazır olduğunda otomatik görünecek',
+              Text(
+                widget.baglantiSorunu
+                    ? 'Backend\'e ulaşılamıyor'
+                    : 'AI videoyu işliyor',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppTheme.inkSoft, fontSize: 12.5),
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15.5,
+                  color: widget.baglantiSorunu ? AppTheme.danger : AppTheme.ink,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                widget.baglantiSorunu
+                    ? 'Sonuç hazır olabilir ama sorgulayamıyoruz. Bağlantıyı '
+                        '(hücresel veri) kontrol edin — otomatik denemeye devam ediliyor.'
+                    : 'Tespitler hazır olduğunda otomatik görünecek',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppTheme.inkSoft, fontSize: 12.5),
               ),
               const SizedBox(height: 22),
               Text(

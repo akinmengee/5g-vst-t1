@@ -35,7 +35,7 @@ class SessionController extends ChangeNotifier {
   final QodService _qodService = QodService();
   final CellularNetworkService _cellular = CellularNetworkService();
   final VideoRecordingService _recordingService = VideoRecordingService();
-  final ResultsService _resultsService = ResultsService();
+  final ResultsService _resultsService;
   final LifeboxService _lifeboxService = LifeboxService();
   final BandwidthProbeService _bandwidthProbe = BandwidthProbeService();
   final HlsVariantService _hlsVariants = HlsVariantService();
@@ -65,6 +65,18 @@ class SessionController extends ChangeNotifier {
   // ---- AI durumu ----------------------------------------------------------
   bool aiLoading = false;
 
+  /// Arka arkaya kaç AI sonuç sorgusunun backend'e ULAŞAMADIĞI. Başarılı her
+  /// sorguda sıfırlanır. Ekran bunu kullanıp "AI çalışıyor" ile "bağlantı
+  /// koptu"yu ayırt eder — ikisi aynı görünürse kullanıcı kopmuş bir
+  /// bağlantıyı dakikalarca "işleniyor" sanıp bekler (6 Ağustos hatası).
+  int ardisikAiPollHatasi = 0;
+
+  /// Tek bir dalgalanma paniğe yol açmasın diye eşik: 3 ardışık başarısız
+  /// sorgu (~6 sn, poll aralığı 2 sn) sonrası bağlantı sorunu bildirilir.
+  static const _baglantiSorunuEsigi = 3;
+
+  bool get aiBaglantiSorunu => ardisikAiPollHatasi >= _baglantiSorunuEsigi;
+
   /// AI Sonucu sekmesinde detayı açık olan iş; null = liste görünümü.
   String? selectedJobId;
 
@@ -74,7 +86,10 @@ class SessionController extends ChangeNotifier {
 
   bool _disposed = false;
 
-  SessionController() {
+  /// [resultsService] yalnızca testler için enjekte edilir; uygulamada
+  /// varsayılan (paylaşılan `ApiClient`'a bağlı) örnek kullanılır.
+  SessionController({ResultsService? resultsService})
+      : _resultsService = resultsService ?? ResultsService() {
     _loadExistingRecordings();
   }
 
@@ -99,6 +114,13 @@ class SessionController extends ChangeNotifier {
     nvLoading = true;
     nvSession = NvSession(status: NvStatus.idle, phoneNumber: phoneNumber);
     _notify();
+
+    // Önceki denemeden kalmış olabilecek BAYAT hücresel bağlamayı temizle.
+    // Bayat bağlama uygulamanın tüm ağını öldürüyor: login isteği bile
+    // çıkamıyor ve kullanıcı "connection failed" görüyor, oysa backend
+    // sağlam (7 Ağustos gecesi tarayıcıdan /health açılıyorken uygulama
+    // bağlanamıyordu). Bağlama yoksa bu çağrı no-op.
+    await _cellular.unbind();
 
     final login = await _nvService.login(phoneNumber);
     if (!login.success) {
@@ -126,11 +148,15 @@ class SessionController extends ChangeNotifier {
     // NV, hücresel veri bağlantısı üzerinden doğrulanır (şartname + sözleşme 3).
     // Android'de process'i geçici olarak SIM ağına bağlarız — WebView trafiği
     // de bu bağlamadan geçer. Diğer platformlarda no-op.
-    final bound = await _cellular.bindToCellular();
+    await _cellular.bindToCellular();
     try {
       await _pollNvStatus(login.flowId!, phoneNumber);
     } finally {
-      if (bound) await _cellular.unbind();
+      // KOŞULSUZ unbind. Eskiden `if (bound)` şartı vardı: Dart 3 sn'de pes
+      // edip false alırsa unbind ATLANIYORDU, ama native taraf saniyeler
+      // sonra bağlamayı yapıyordu → bağlama kalıcı asılı kalıyor, bayatlayınca
+      // uygulamanın tüm ağı ölüyordu (7 Ağustos arızası).
+      await _cellular.unbind();
     }
   }
 
@@ -381,21 +407,49 @@ class SessionController extends ChangeNotifier {
 
     aiLoading = true;
     _notify();
-    for (final r in beklemede) {
-      final response = await _resultsService.fetchResult(r.jobId!);
-      r.aiStatus = response.status;
-      if (response.result != null) {
-        r.aiResult = response.result;
-        r.resultsSha256 = sha256
-            .convert(utf8.encode(jsonEncode(response.result!.raw)))
-            .toString();
+    var turdaHataVar = false;
+    try {
+      for (final r in beklemede) {
+        final response = await _resultsService.fetchResult(r.jobId!);
+        if (response.pollFailed) {
+          // Backend'e ulaşılamadı: mevcut durumu KORU (yanlışlıkla FAILED
+          // yazmıyoruz), sadece sorunu kaydet — polling aşağıda yeniden
+          // planlanıyor, ağ düzelince sonuç kendiliğinden gelir.
+          turdaHataVar = true;
+          continue;
+        }
+        r.aiStatus = response.status;
+        if (response.result != null) {
+          r.aiResult = response.result;
+          r.resultsSha256 = sha256
+              .convert(utf8.encode(jsonEncode(response.result!.raw)))
+              .toString();
+        }
       }
-    }
-    aiLoading = false;
-    _notify();
+    } catch (e) {
+      // Savunma katmanı: fetchResult artık kendi istisnalarını yutuyor, ama
+      // buradaki bir istisna (ör. sha256/jsonEncode) aşağıdaki finally
+      // olmadan `_scheduleAiPoll()`'u atlatır ve polling'i SONSUZA DEK
+      // öldürürdü — ekran "işleniyor"da donardı.
+      turdaHataVar = true;
+      debugPrint('AI sonucu sorgusunda beklenmeyen hata: $e');
+    } finally {
+      ardisikAiPollHatasi = turdaHataVar ? ardisikAiPollHatasi + 1 : 0;
 
-    if (recordings.any((r) => r.aiStatus == AiResultStatus.processing)) {
-      _scheduleAiPoll();
+      // Kendi kendini onarma: ısrarlı bağlantı hatasının bilinen bir sebebi,
+      // NV'den kalan bayat hücresel bağlamanın uygulamanın tüm ağını
+      // öldürmesi. Eşiğe gelindiğinde BİR KEZ temizlemeyi dene — bağlama
+      // yoksa zararsız no-op, varsa arıza kendiliğinden düzelir.
+      if (ardisikAiPollHatasi == _baglantiSorunuEsigi) {
+        unawaited(_cellular.unbind());
+      }
+
+      aiLoading = false;
+      _notify();
+
+      if (recordings.any((r) => r.aiStatus == AiResultStatus.processing)) {
+        _scheduleAiPoll();
+      }
     }
   }
 

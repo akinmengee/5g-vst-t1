@@ -97,7 +97,7 @@ void main() {
     expect(yukleme.jobId, isNotNull);
 
     // SessionController'ın periyodik polling'inin yaptığı iş.
-    ({AiResultStatus status, AiResult? result})? sonuc;
+    ({AiResultStatus status, AiResult? result, bool pollFailed})? sonuc;
     for (var i = 0; i < 90; i++) {
       sonuc = await results.fetchResult(yukleme.jobId!);
       if (sonuc.status != AiResultStatus.processing) break;
