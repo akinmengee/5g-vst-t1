@@ -189,3 +189,106 @@ ekrandaki bir hata mesajını sessizce silebilir.
 *Bu not `/code-review` çıktısının insan-okur özeti olarak hazırlandı; kaynak
 ajan çıktıları ve doğrulama detayları bu oturumun `ReportFindings`
 kaydında mevcut.*
+
+---
+
+# 6 Ağustos 2026 — Yapılan değişiklikler + toplantı Q&A çıkarımları
+
+Yukarıdaki 5 Ağustos notunun aksine, buradaki maddeler **uygulandı ve
+doğrulandı** (kod + test kanıtıyla), bir backlog değil bir değişiklik
+kaydı. Kaynak: 3 Ağustos organizasyon Q&A toplantısının kaydı (27 soru-
+cevap incelendi, tam liste `PLAN.md`'ye işlendi) + o sırada ortaya çıkan
+iki somut kod açığının düzeltilmesi.
+
+## Kod değişiklikleri (mobile/)
+
+1. **`mobile/lib/services/lifebox_service.dart` — video artık ZIP'lenerek paylaşılıyor.**
+   Sebep: Q&A'de "Lifebox ham video yüklerse galeri unsuru sayıp
+   çözünürlüğü düşürebilir, canlı demoyla farklı sonuç çıkarsa bu
+   DİSKALİFİYE sebebi" denildi. `archive` paketinin `ZipFileEncoder`'ı
+   `CompressionType.none` ile kullanıldı (deflate yolu tüm dosyayı
+   `OutputMemoryStream`'e alıyor — 100+MB kayıtta bellek riski taşırdı,
+   test bunu doğruluyor: `lifebox_zip_test.dart` sıkıştırılabilir 1MB'lık
+   içeriğin küçülmediğini kanıtlıyor).
+
+2. **`mobile/lib/services/hls_variant_service.dart` (yeni dosya) — bant
+   genişliğine göre HLS varyant seçimi eklendi.** Bu, koddan BAĞIMSIZ
+   olarak ampirik biçimde doğrulanmış gerçek bir açıktı: yerel ffmpeg
+   8.1.1 ile uygulamanın kullandığı komutun birebir aynısı çalıştırıldı,
+   master playlist verildiğinde ffmpeg'in ağ koşulundan bağımsız her
+   zaman en yüksek varyantı (1080p) seçtiği kanıtlandı. Şartname 4.2
+   açıkça "anlık bant genişliğine en uygun videoyu stream etmesi
+   gerekmektedir" diyor — düşük bantta yüksek varyant denenirse 5
+   dakikalık kayıt penceresi yetişmez. Düzeltme: `session_controller.dart`
+   artık `HlsVariantService.resolveVariant()` ile alt-playlist URL'ini
+   doğrudan ffmpeg'e veriyor; bu da gerçek sunucuya karşı test edildi
+   (5 Mbps → 240p alt-playlist URL'i üretiliyor, ffmpeg o URL'de gerçekten
+   426x240 veriyor — URL'ler birebir eşleşti).
+
+3. **`mobile/test/backend_integration_test.dart` düzeltildi.** Video testi
+   önceden sahte (64KB uydurma byte) veri gönderip `DONE`+tespit
+   bekliyordu — bu, artık kaldırılmış "sahte AI çalıştırıcı" döneminden
+   kalma bir varsayımdı, gerçek GPU imajına karşı hep başarısız oluyordu
+   (`status`/`detections` değil, artık yalnızca upload→job→polling
+   sözleşmesinin tuttuğu sınanıyor). `@Timeout` 2dk→5dk (gerçek inference
+   dakikalar sürüyor). VM backend'ine karşı artık **6/6** geçiyor (önceden 5/6).
+
+4. **`mobile/lib/config/app_config.dart` — `testHlsUrl` artık
+   `String.fromEnvironment('HLS_URL', ...)`.** `BACKEND_URL` ile aynı
+   desen: final günü stream adresi değişirse kod düzenlenmeden
+   `--dart-define=HLS_URL=...` ile build alınabilir (7 Ağustos 21:00
+   sonrası kaynağa dokunmama ilkesiyle uyumlu).
+
+5. **`mobile/lib/widgets/video_card.dart`** — kayıt sırasında seçilen
+   varyant UI'da gösteriliyor ("Bant genişliğine göre seçilen kalite:
+   240p") — hakem canlı demoda adaptif seçimi görebilsin diye.
+
+**Doğrulama:** `dart analyze` temiz (not: bu makinede `flutter analyze`
+yol içindeki `Masaüstü` karakteri yüzünden çöküyor, `dart analyze`
+kullanılmalı), mobil testler 20/20 (13'ü yeni), backend 39/39, VM
+backend'ine karşı entegrasyon 6/6. **Test edilmeyen:** gerçek Android
+cihaz — ffmpeg_kit'in alt-playlist URL'ini telefonda da aynı işlemesi,
+gerçek boyutlu (100+MB) videonun telefonda zip süresi, ve zip'in Lifebox
+uygulamasına share sheet'ten düzgün gitmesi doğrulanmadı.
+
+## Backend containerization (infra, aynı gün ayrıca yapıldı)
+
+`backend/Dockerfile` eklendi, VM'de `vst-t1-backend` container'ı olarak
+(Docker-outside-of-Docker: `docker.sock` + `JOB_STORAGE_PATH` host'la
+birebir aynı path'te mount) çalıştırıldı, gerçek Faz2 videosuyla 3 kez
+(container öncesi, sonrası, kasıtlı çökme+otomatik restart sonrası)
+birebir aynı sonuçla doğrulandı. Detaylar `PLAN.md`'de.
+
+## ⚠️ AI ekibine iletilmesi gereken — mevcut bug listesiyle KESİŞEN toplantı bulguları
+
+Yukarıdaki "AI tarafı" bölümündeki bug #1-3 (kemer bayrağının kalıcı
+kapanması, "etiket başına video-geneli maks 1" filtresi, teknocan sayım
+sırası hatası) **5 Ağustos'ta, bu toplantıdan ÖNCE** yazılmıştı. 3 Ağustos
+Q&A'sinden gelen şu bilgiler bu bug'ları doğrudan ilgilendiriyor, AI ekibi
+düzeltme kararı alırken birlikte okumalı:
+
+- **"Yaşam döngüsü" kuralı:** dedupe/max-1 kısıtı VİDEO GENELİNDE değil,
+  **her araç geçişi/instance başına** olmalı ("2 dakikalık videoda bir
+  sürü klip var" — her klip kendi yaşam döngüsü). Bug #2'deki
+  `max_allowed = 1` (satır 1277, video geneli) bu kuralla **uyuşmuyor
+  olabilir** — eğer bir videoda birden fazla ayrı araç geçişi varsa, bu
+  filtre farklı araçlardaki gerçek ihlalleri de silebilir.
+- **Fazladan/tekrarlı raporlar artık nötr değil, FALSE POZİTİF SAYILIYOR**
+  ve puan kaybettiriyor — bug #1'in tam tersi yönde bir risk oluşturuyor
+  olabilir (kemer bayrağı hiç kapanmazsa video boyunca tekrar tekrar
+  ihlal raporlanır, her tekrar artık FP).
+- **Emniyet kemeri ihlali için kemerin TAKILI OLMADIĞININ görülmesi
+  gerekiyor** (varlık tespitinden yokluk çıkarımı da kabul, yöntem
+  serbest); kemer hiç görünmüyorsa ihlal sayılabilir.
+- **arka_koltuk_1/arka_koltuk_2 koltuk pozisyonu değil, KİŞİ SAYISI
+  etiketi** ("arka koltukta 1/2 kişi var"). 6 Ağustos sabahki ground-
+  truth karşılaştırmasında (`PLAN.md`) bu ikisi ayrı kategoriler gibi
+  yorumlanmıştı — muhtemelen yanlış, gerçek sorun sayım kararlılığı
+  (2→1 flicker) olabilir.
+- **Aydınlık/parlama karanlıktan daha riskli** deniliyor, "nesneleri
+  birden fazla görüyor olabiliriz" uyarısı yapıldı — duplicate tespit
+  riski, yukarıdaki max-1 filtresiyle ilişkili olabilir.
+- Puanlama netleşti: sapma 0-10 saniye arası lineer düşüş (10 sn'de 0
+  puan), erken tespitte %10'a kadar bonus ("look-ahead" penceresi).
+
+Bu maddelerin tam metni ve gerekçesi `PLAN.md`'de.

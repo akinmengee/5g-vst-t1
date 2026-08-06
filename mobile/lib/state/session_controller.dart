@@ -14,6 +14,7 @@ import '../models/recording_item.dart';
 import '../services/api_client.dart';
 import '../services/bandwidth_probe_service.dart';
 import '../services/cellular_network_service.dart';
+import '../services/hls_variant_service.dart';
 import '../services/lifebox_service.dart';
 import '../services/nv_service.dart';
 import '../services/qod_service.dart';
@@ -37,6 +38,7 @@ class SessionController extends ChangeNotifier {
   final ResultsService _resultsService = ResultsService();
   final LifeboxService _lifeboxService = LifeboxService();
   final BandwidthProbeService _bandwidthProbe = BandwidthProbeService();
+  final HlsVariantService _hlsVariants = HlsVariantService();
 
   TraceLog get traceLog => ApiClient.instance.traceLog;
 
@@ -54,6 +56,11 @@ class SessionController extends ChangeNotifier {
   Duration recordingElapsed = Duration.zero;
   String? recordingError;
   final List<RecordingItem> recordings = [];
+
+  /// Son kayıtta ölçülen bant genişliğine göre seçilen HLS varyantı
+  /// (şartname 4.2). UI bunu göstererek "en uygun kaliteyi seçtik"i
+  /// kanıtlayabilir; null = henüz seçim yapılmadı ya da çözülemedi.
+  HlsVariant? secilenVaryant;
 
   // ---- AI durumu ----------------------------------------------------------
   bool aiLoading = false;
@@ -230,10 +237,11 @@ class SessionController extends ChangeNotifier {
     recording = true;
     recordingElapsed = Duration.zero;
     recordingError = null;
+    secilenVaryant = null;
     _notify();
 
     final result = await _recordingService.startRecording(
-      hlsUrl: hlsUrl,
+      hlsUrl: await _kayitKaynagi(hlsUrl),
       onProgress: (elapsed) {
         recordingElapsed = elapsed;
         _notify();
@@ -256,6 +264,25 @@ class SessionController extends ChangeNotifier {
       recordingError = result.errorMessage ?? 'Kayıt başarısız';
     }
     _notify();
+  }
+
+  /// Şartname 4.2: kayıt, o anki bant genişliğine EN UYGUN varyanttan
+  /// alınmalıdır — ffmpeg'e master playlist verilirse her koşulda en yüksek
+  /// çözünürlüğü seçer ve düşük bantta 5 dakikalık pencere yetmez.
+  ///
+  /// Ölçüm QoD adımında zaten alınıyor ([bandwidthAfter]); o yoksa (QoD
+  /// atlandıysa) burada bir kez ölçülür. Hiçbir ölçüm/çözümleme yapılamazsa
+  /// master URL'e düşeriz — kayıt hiç başlamamaktansa ffmpeg kendi seçsin.
+  Future<String> _kayitKaynagi(String masterUrl) async {
+    var olcum = (bandwidthAfter ?? bandwidthBefore)?.mbps;
+    olcum ??= (await _bandwidthProbe.probe(masterUrl))?.mbps;
+
+    final variant = await _hlsVariants.resolveVariant(masterUrl, olcum);
+    if (variant == null) return masterUrl;
+
+    secilenVaryant = variant;
+    _notify();
+    return variant.url;
   }
 
   Future<void> _fillSize(RecordingItem item) async {

@@ -1,19 +1,14 @@
 """Flow durumu ve flow kayıt defteri (NV/QoD).
 
-`SessionRegistry` (vehicle_ai/session.py) ile AYNI TTL-eviction desenini uygular
-(time.monotonic(), get()'te lazy _evict_expired(), düz dict, kilit yok) — ama
-bağımsız bir yeniden implementasyondur, vehicle_ai koduna bağımlılık yoktur.
+TTL-eviction deseni job_state.py::JobRegistry ile aynıdır (time.monotonic(),
+get()'te lazy _evict_expired(), düz dict, kilit yok) — bkz. oradaki docstring.
 
-Kilitsiz olmasının gerekçesi SessionRegistry'den FARKLIDIR: SessionRegistry'nin
-asıl riski asyncio.to_thread() ile GERÇEK thread'lerden erişilmesiydi (model
-çıkarımı). FlowRegistry SADECE async route handler'larından, event loop
-üzerinden, asyncio.to_thread SARMALANMADAN çağrılır — tek thread'li async
-yürütme bunu kilitsiz güvenli kılar. Bilinçli bir tasarım kararıdır.
+Kilitsiz olması bilinçli bir tasarım kararıdır: FlowRegistry SADECE async
+route handler'larından, event loop üzerinden, asyncio.to_thread SARMALANMADAN
+çağrılır — tek thread'li async yürütme bunu kilitsiz güvenli kılar.
 
-NOT: SessionRegistry.get() bilinmeyen id'de YENİ oturum yaratır (session_id'yi
-mobil üretir). FlowRegistry'de tam tersi: flow_id backend tarafından /login'de
-üretilir, bu yüzden get() bilinmeyen flow_id'de None döner (route 404'e
-çevirir), otomatik yaratma YAPILMAZ.
+NOT: get() bilinmeyen flow_id'de None döner (route 404'e çevirir), otomatik
+yaratma YAPILMAZ — flow_id yalnızca backend tarafından /login'de üretilir.
 """
 
 import time

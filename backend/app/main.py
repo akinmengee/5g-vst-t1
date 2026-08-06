@@ -2,8 +2,8 @@
 
 AI çıkarımı bu process'te ÇALIŞMAZ: backend, videoyu diske yazıp ayrı bir
 Docker imajını (teknofest-2026/vst-t1) tetikleyen ince bir katmandır. Bu
-yüzden torch/opencv/ultralytics bağımlılığı yoktur — vehicle_ai/* kodu ai/
-imajına taşınana kadar repoda durur ama buradan import edilmez.
+yüzden torch/opencv/ultralytics bağımlılığı yoktur — AI çekirdeği tamamen
+`ai/` imajına taşındı (VM'de doğrulandı, bkz. PLAN.md Faz C).
 """
 
 import logging

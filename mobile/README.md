@@ -2,8 +2,8 @@
 
 Final akışının mobil ayağı: Number Verification → Quality on Demand → HLS
 stream kaydı (maks. 5 dk, MP4) → backend'e yükleme + Lifebox paylaşımı →
-video başına tespit sonuçları. Backend sözleşmesinin tek doğruluk kaynağı:
-`../docs/mobile-integration.md`.
+video başına tespit sonuçları. Backend sözleşmesi: `../backend/README.md`
+Endpoint'ler listesi ve `../PLAN.md`.
 
 ## Çalıştırma
 

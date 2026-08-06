@@ -1,8 +1,9 @@
 """OpenGatewayClient'ın tekil (singleton) yaşam döngüsü.
 
-vehicle_ai/runtime.py'deki desenle aynı: modül seviyesinde global, lazy, kilitsiz.
-FastAPI lifespan başlangıcında bir kez çağrılır — böylece eksik Turkcell
-konfigürasyonu (gerçek client seçiliyken) uygulama açılışında anında görünür.
+orchestration/runtime.py'deki desenle aynı: modül seviyesinde global, lazy,
+kilitsiz. FastAPI lifespan başlangıcında bir kez çağrılır — böylece eksik
+Turkcell konfigürasyonu (gerçek client seçiliyken) uygulama açılışında anında
+görünür.
 """
 
 from app.services.network.factory import get_open_gateway_client

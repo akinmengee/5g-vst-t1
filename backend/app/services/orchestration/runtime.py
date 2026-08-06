@@ -1,9 +1,8 @@
 """FlowRegistry/JobRegistry/AiRunner'ın tekil (singleton) yaşam döngüsü.
 
-network/runtime.py ve vehicle_ai/runtime.py ile AYNI desen: modül seviyesinde
-global, lazy, kilitsiz — FastAPI lifespan başlangıcında bir kez çağrılır,
-böylece eksik konfigürasyon (örn. docker modunda docker'ın PATH'te olmaması)
-açılışta anında görünür.
+network/runtime.py ile AYNI desen: modül seviyesinde global, lazy, kilitsiz —
+FastAPI lifespan başlangıcında bir kez çağrılır, böylece eksik konfigürasyon
+(örn. docker modunda docker'ın PATH'te olmaması) açılışta anında görünür.
 """
 
 import asyncio

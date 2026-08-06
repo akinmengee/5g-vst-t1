@@ -154,6 +154,25 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
               ),
             ],
           ),
+          // Şartname 4.2: kayıt, o anki bant genişliğine en uygun varyanttan
+          // alınıyor. Seçimi görünür kılıyoruz — canlı demoda hakemin bunu
+          // doğrulayabilmesi için (QoD başarılıysa yüksek, değilse düşük).
+          if (c.secilenVaryant != null) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.network_check, size: 14, color: AppTheme.inkSoft),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    'Bant genişliğine göre seçilen kalite: '
+                    '${c.secilenVaryant!.etiket}',
+                    style: const TextStyle(fontSize: 11.5, color: AppTheme.inkSoft),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,

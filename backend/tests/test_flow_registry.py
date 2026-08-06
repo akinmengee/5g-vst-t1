@@ -1,5 +1,5 @@
-"""FlowRegistry birim testleri — TTL deseni SessionRegistry testleriyle aynı
-(bkz. test_service_pipeline.py: test_oturum_ttl_ile_dusurulur)."""
+"""FlowRegistry birim testleri — TTL deseni JobRegistry testleriyle aynı
+(bkz. test_job_registry.py)."""
 
 import time
 
@@ -7,7 +7,7 @@ from app.services.orchestration.flow_state import FlowRegistry
 
 
 def test_bilinmeyen_flow_id_none_doner():
-    """SessionRegistry'nin aksine FlowRegistry bilinmeyen id'de oturum YARATMAZ."""
+    """JobRegistry'nin aksine FlowRegistry bilinmeyen id'de oturum YARATMAZ."""
     registry = FlowRegistry(ttl_seconds=60.0)
     assert registry.get("hic-olusturulmadi") is None
     assert len(registry) == 0

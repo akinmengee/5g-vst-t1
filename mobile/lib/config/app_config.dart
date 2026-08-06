@@ -25,10 +25,21 @@ class AppConfig {
   /// Open Gateway Demo UX Kılavuzu'ndaki sandbox test numarası.
   static const String sandboxTestPhoneNumber = '+905390000020';
 
-  /// Faz 2 test HLS akışı (final günü gerçek streaming server URL'i ile
-  /// değişecek).
-  static const String testHlsUrl =
-      'https://teknofest-arge-turkcell.ercdn.net/hls/4/pZ/faz2/faz2.smil/playlist.m3u8';
+  /// Kayıt alınacak HLS akışı. Varsayılan, Faz 2 test akışıdır; final günü
+  /// gerçek streaming server adresi verilecek.
+  ///
+  /// Backend adresi gibi bu da `--dart-define` ile çalıştırma zamanında
+  /// veriliyor — final günü adres değişirse KOD DÜZENLENMESİ gerekmez
+  /// (7 Ağustos 21:00 dondurmasından sonra kaynağa dokunmak istemiyoruz):
+  ///
+  /// ```
+  /// flutter build apk --dart-define=HLS_URL=https://.../playlist.m3u8
+  /// ```
+  static const String testHlsUrl = String.fromEnvironment(
+    'HLS_URL',
+    defaultValue:
+        'https://teknofest-arge-turkcell.ercdn.net/hls/4/pZ/faz2/faz2.smil/playlist.m3u8',
+  );
 
   /// Şartname: "maksimum 5 dakika içerisinde videonun tamamını kaydetmesi".
   static const Duration maxRecordingDuration = Duration(minutes: 5);

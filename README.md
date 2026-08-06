@@ -104,9 +104,9 @@ Her parçanın kendi kurulum/çalıştırma talimatı kendi klasöründe:
   [`mobile/CLAUDE.md`](./mobile/CLAUDE.md) — `flutter run
   --dart-define=BACKEND_URL=...`, bilinen platform kısıtları (Windows
   masaüstünde NV WebView test edilemez).
-- **AI:** [`docs/ai-integration.md`](./docs/ai-integration.md) —
-  `docker build -t teknofest-2026/vst-t1:latest ai/`, çalıştırma
-  sözleşmesi, resmi kısıt tablosu (8GB imaj, 10dk çalışma süresi).
+- **AI:** `docker build -t teknofest-2026/vst-t1:latest ai/` ile imaj
+  build edilir; çalışma sözleşmesi, açık riskler ve doğrulama durumu
+  [`PLAN.md`](./PLAN.md)'de.
 
 Üçünü birlikte, gerçek bir backend + gerçek AI imajına karşı test etmek
 için:
@@ -153,10 +153,6 @@ Detaylı yol haritası, açık riskler ve gerekçeler için bkz.
 
 - **[`PLAN.md`](./PLAN.md)** — mimari kararlar, gerekçeler, tamamlanan
   işler, yol haritası, açık riskler, doğrulama planı.
-- **[`docs/mobile-integration.md`](./docs/mobile-integration.md)** —
-  backend ↔ mobil sözleşmesi (tek doğruluk kaynağı).
-- **[`docs/ai-integration.md`](./docs/ai-integration.md)** — backend ↔ AI
-  sözleşmesi, resmi Docker kısıtları, AI ekibi için onboarding.
 - **[`backend/README.md`](./backend/README.md)**,
   **[`mobile/README.md`](./mobile/README.md)**,
   **[`mobile/CLAUDE.md`](./mobile/CLAUDE.md)** — parçaya özel kurulum ve

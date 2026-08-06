@@ -44,6 +44,10 @@ dependencies:
   ffmpeg_kit_flutter_new: ^4.6.2
   webview_flutter: ^4.10.0
   crypto: ^3.0.6
+  # Lifebox'a giden videoyu ZIP kabuğuna sarmak için (bkz. LifeboxService).
+  # Zaten transitive bağımlılıktı, yalnızca doğrudan kullandığımız için açıkça
+  # beyan ediyoruz — yeni bir paket indirilmiyor.
+  archive: ^4.0.9
 
 dev_dependencies:
   flutter_test:

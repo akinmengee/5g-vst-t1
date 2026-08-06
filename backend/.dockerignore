@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.local-jobs/
+.env
+.env.local
+tests/
+requirements-dev.txt
+README.md
+Dockerfile
+.dockerignore

@@ -1,14 +1,3 @@
 # Geliştirme/test bağımlılıkları (Docker imajına dahil edilmez)
 -r requirements.txt
 pytest
-
-# AI-core testleri (test_service_pipeline.py, test_streaming_equivalence.py) için —
-# ai/ paketine taşınana kadar geçici olarak burada. Backend'in kendisi bu
-# paketlere bağımlı DEĞİLDİR (main.py artık vehicle_ai import etmiyor).
---extra-index-url https://download.pytorch.org/whl/cu121
-opencv-python-headless
-numpy
-ultralytics
-mediapipe
-torch
-torchvision
