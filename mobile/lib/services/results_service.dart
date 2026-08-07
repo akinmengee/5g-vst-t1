@@ -30,13 +30,16 @@ class ResultsService {
         'flow_id': flowId,
         'video': await MultipartFile.fromFile(filePath, filename: 'video.mp4'),
       });
-      // Video birkaç yüz MB olabilir (5 dk 1080p) — upload timeout'u ayrıca
-      // uzun tutuluyor, RetryInterceptor sadece bağlantı hatalarında devreye
-      // giriyor (yarım kalan büyük upload'ı baştan denemez).
+      // Video birkaç yüz MB olabilir — yarışma SIM'inde QoD'li hız 8 Mbit/s,
+      // yani 2 dakikalık 1080p kayıt (~137 MB) ~137 saniyede yükleniyor.
+      // Eski 3 dakikalık sınır bu sürenin hemen üstündeydi: en ufak ağ
+      // dalgalanmasında yükleme yarıda kesiliyordu. RetryInterceptor da
+      // devreye giremiyor (FormData tek kullanımlık, yarım kalan büyük
+      // upload'ı baştan denemez), o yüzden pay geniş tutuluyor.
       final response = await _dio.post(
         '/api/videos/upload',
         data: formData,
-        options: Options(sendTimeout: const Duration(minutes: 3)),
+        options: Options(sendTimeout: const Duration(minutes: 10)),
       );
       return UploadResult(success: true, jobId: response.data['job_id'] as String?);
     } on DioException catch (e) {

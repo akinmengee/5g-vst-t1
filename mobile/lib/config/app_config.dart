@@ -10,20 +10,22 @@
 class AppConfig {
   AppConfig._();
 
-  /// Backend sözleşmesi (docs/mobile-integration.md): endpoint yolları `/api/...`
-  /// ile başlar, bu yüzden burada `/api` YOK — servislerin kendi path'lerinde var.
+  /// Backend adresi. Endpoint yolları `/api/...` ile başladığı için burada
+  /// `/api` YOK — servislerin kendi path'lerinde var.
   ///
   /// Gerçek telefonda `localhost` TELEFONUN kendisini işaret eder, backend'in
   /// çalıştığı bilgisayarı değil — cihazla test ederken makinenin LAN IP'sini
-  /// verin. Backend'in `PUBLIC_BASE_URL`'i de aynı adres olmalı, çünkü mock
-  /// onay sayfası WebView'i o adres üzerinden callback'e yönlendiriyor.
+  /// (ya da yarışma VM'inin adresini) verin.
   static const String backendBaseUrl = String.fromEnvironment(
     'BACKEND_URL',
     defaultValue: 'http://localhost:8000',
   );
 
-  /// Open Gateway Demo UX Kılavuzu'ndaki sandbox test numarası.
-  static const String sandboxTestPhoneNumber = '+905390000020';
+  /// NV ekranındaki telefon alanının başlangıç değeri. **Varsayılan boş** —
+  /// yarışma günü elimizdeki SIM'in numarası girilecek ve yanlış bir numarayı
+  /// önceden doldurmak, doğrulamanın sessizce reddedilmesine yol açar.
+  /// Tekrarlı testlerde kolaylık için: `--dart-define=PHONE=+90...`
+  static const String varsayilanTelefon = String.fromEnvironment('PHONE');
 
   /// Kayıt alınacak HLS akışı. Varsayılan, Faz 2 test akışıdır; final günü
   /// gerçek streaming server adresi verilecek.

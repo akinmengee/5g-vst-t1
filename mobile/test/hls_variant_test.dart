@@ -59,42 +59,64 @@ segment0.ts
     });
   });
 
-  group('selectForBandwidth', () {
+  // Seçim kuralı 7 Ağustos'ta bant genişliği ÖLÇÜMÜNDEN QoD DURUMUNA çevrildi.
+  //
+  // Gerekçe: yarışma SIM'inde ara bir hız yok — QoD'siz 256 kbit/s, QoD'li
+  // 8 Mbit/s. Ölçüme dayalı seçim hem gereksizdi hem de tam ters yönde
+  // çalışıyordu: QoD'siz durumda ölçüm zaman aşımına düşüyor, "ölçüm yok"
+  // hâli de en YÜKSEK varyantı seçtiriyordu (256 kbit'te 1080p ≈ 68 dakika,
+  // ekran donmuş görünüyordu).
+  //
+  // Akış VOD olduğu için (#EXT-X-PLAYLIST-TYPE:VOD + #EXT-X-ENDLIST) QoD
+  // varken en yükseği seçmek güvenli: 8 Mbit'lik hatta 9.16 Mbps'lik yayın
+  // iner, sadece video süresinden biraz uzun sürer (114 sn video ≈ 130 sn).
+  group('selectForQod', () {
     List<HlsVariant> variants() =>
         HlsVariantService.parseMaster(_gercekMaster, _taban);
 
-    test('yuksek bantta 1080p secer (QoD basarili senaryosu)', () {
-      // 50 Mbps: 1080p (9.155) güvenlik payıyla bile rahat sığar.
-      final secilen = HlsVariantService.selectForBandwidth(variants(), 50);
+    test('QoD acikken 1080p secer (8 Mbit, VOD - gercek zamanli yetisme sart degil)', () {
+      final secilen = HlsVariantService.selectForQod(
+        varyantlar: variants(),
+        qodAktif: true,
+      );
       expect(secilen!.name, '1080p');
     });
 
-    test('dusuk bantta 240pye duser (QoD basarisiz senaryosu)', () {
-      // 5 Mbps: 1080p sığmaz. Şartname 4.2'nin uyardığı durum — burada
-      // 1080p denenirse 5 dakikalık kayıt penceresi yetmez.
-      final secilen = HlsVariantService.selectForBandwidth(variants(), 5);
+    test('QoD kapaliyken 240pye duser (256 kbit fallback)', () {
+      // Tercih DEĞİL, çaresizlik: 256 kbit'te 1080p ~68 dakika sürerdi ve
+      // 5 dakikalık kayıt penceresine hiç sığmazdı.
+      final secilen = HlsVariantService.selectForQod(
+        varyantlar: variants(),
+        qodAktif: false,
+      );
       expect(secilen!.name, '240p');
     });
 
-    test('guvenlik payi sinirda ust varyanti secmez', () {
-      // 1080p tam 9.155 Mbps; ölçüm de 9.2 Mbps ise pay bırakmadan seçmek
-      // riskli olurdu (guvenlikPayi = 0.85 -> bütçe 7.82 Mbps).
-      final secilen = HlsVariantService.selectForBandwidth(variants(), 9.2);
-      expect(secilen!.name, '240p');
+    test('tek varyantli playlistte QoD durumundan bagimsiz o varyant secilir', () {
+      final tek = HlsVariantService.parseMaster('''
+#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=800000,NAME=480p
+only.m3u8
+''', _taban);
+      expect(
+        HlsVariantService.selectForQod(varyantlar: tek, qodAktif: true)!.name,
+        '480p',
+      );
+      expect(
+        HlsVariantService.selectForQod(varyantlar: tek, qodAktif: false)!.name,
+        '480p',
+      );
     });
 
-    test('hicbiri sigmazsa en dusugu secer (kayit hic alinamamaktansa)', () {
-      final secilen = HlsVariantService.selectForBandwidth(variants(), 0.01);
-      expect(secilen!.name, '240p');
-    });
-
-    test('olcum yoksa en yuksegi secer (mevcut ffmpeg davranisi)', () {
-      final secilen = HlsVariantService.selectForBandwidth(variants(), null);
-      expect(secilen!.name, '1080p');
-    });
-
-    test('varyant yoksa null doner', () {
-      expect(HlsVariantService.selectForBandwidth([], 50), isNull);
+    test('varyant yoksa null doner (cagiran master URLe duser)', () {
+      expect(
+        HlsVariantService.selectForQod(varyantlar: [], qodAktif: true),
+        isNull,
+      );
+      expect(
+        HlsVariantService.selectForQod(varyantlar: [], qodAktif: false),
+        isNull,
+      );
     });
   });
 }

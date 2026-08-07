@@ -71,10 +71,11 @@ flowchart LR
     JUDGE["👤 Hakemin Web UI'ı"] -. "aynı imajı\nbağımsız çalıştırır" .-> AI
 ```
 
-Backend'deki tek dış bağımlılık (Turkcell Open Gateway) arayüz arkasında:
-mock ↔ gerçek arası `USE_MOCK_5G` ortam değişkeniyle seçilir, kod
-değişikliği gerekmez. AI çıktısı için sahte bir mod **yoktur** — video her
-zaman gerçek `ai/` imajına gider.
+Sistemde **sahte (mock) hiçbir mod yoktur**: Turkcell çağrıları her zaman
+gerçek Open Gateway'e, video her zaman gerçek `ai/` imajına gider. Gerçek
+credential ve SIM geldikten sonra (7 Ağustos) mock istemci, `USE_MOCK_5G`
+anahtarı ve sahte onay sayfası tamamen kaldırıldı — bir çağrı başarısız
+olursa hata olduğu gibi yüzeye çıkar, üretilmiş bir sonuçla maskelenmez.
 
 ## Proje Yapısı
 
@@ -120,7 +121,8 @@ için:
 
 ```bash
 cd backend
-JOB_STORAGE_PATH=./.local-jobs USE_MOCK_5G=true python -m uvicorn app.main:app --port 8000
+# Turkcell kimlik bilgileri .env'den okunur; eksikse uygulama açılışta durur.
+JOB_STORAGE_PATH=./.local-jobs python -m uvicorn app.main:app --port 8000
 ```
 
 ```bash
@@ -148,9 +150,15 @@ flutter run --dart-define=BACKEND_URL=http://localhost:8000
   dokümandan geliyordu, Final'e uygulanmıyor — organizasyon Q&A'sinde
   netleşti). Çalışma süresi rahat (1080p için 436sn, limit 600sn) —
   gerçek stream'de zaten 4K yok, yalnızca 1080p/240p.
-- [ ] **Turkcell `client_id`/`secret`** — organizasyondan hâlâ gelmedi.
-- [ ] **7 Ağustos 21:00** — AI imajı dondurulup SHA256 alınacak; sonra
-  gerçek Turkcell erişimi açılınca `USE_MOCK_5G=false` ile tam kuru prova.
+- [x] **Turkcell `client_id`/`secret` alındı** — gerçek NV ve QoD canlı
+  çalıştı (7 Ağustos gecesi, gerçek SIM ile). Ardından mock tamamen
+  kaldırıldı: kodda sahte bir veri yolu kalmadı.
+- [x] **Yarışma SIM'inin hızları netleşti** — QoD'siz 256 kbit/s, QoD'li
+  8 Mbit/s. Stream'in VOD olduğu (canlı yayın değil) doğrulandı, bu yüzden
+  kayıt kalitesi QoD durumuna göre seçiliyor: QoD varsa 1080p, yoksa 240p.
+- [ ] **7 Ağustos 21:00** — AI imajı dondurulup SHA256 (image ID) alınacak.
+- [ ] **Yarışma SIM'i ile uçtan uca kuru prova** — kayıt + Lifebox + backend
+  aktarımının 5 dakikalık pencereye sığdığı ölçülecek.
 
 Detaylı yol haritası, açık riskler, organizasyon Q&A netleştirmeleri ve
 PDF-PDF sistematik doğrulama sonuçları için bkz. **[`PLAN.md`](./PLAN.md)**;

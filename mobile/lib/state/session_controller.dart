@@ -18,6 +18,7 @@ import '../services/hls_variant_service.dart';
 import '../services/lifebox_service.dart';
 import '../services/nv_service.dart';
 import '../services/qod_service.dart';
+import '../services/results_fingerprint.dart';
 import '../services/results_service.dart';
 import '../services/trace_log.dart';
 import '../services/video_recording_service.dart';
@@ -134,8 +135,8 @@ class SessionController extends ChangeNotifier {
       return;
     }
 
-    // authorize_url varsa NvScreen bunu görüp WebView'i açar; polling her iki
-    // durumda da (mock/gerçek) aynı şekilde sonucu bekler.
+    // NvScreen authorize_url'i görüp WebView'i açar (Turkcell'in onay sayfası,
+    // hücresel ağ üzerinden); sonucu aşağıdaki status polling'i bekler.
     nvSession = NvSession(
       status: NvStatus.authorizing,
       phoneNumber: phoneNumber,
@@ -306,18 +307,24 @@ class SessionController extends ChangeNotifier {
     _notify();
   }
 
-  /// Şartname 4.2: kayıt, o anki bant genişliğine EN UYGUN varyanttan
-  /// alınmalıdır — ffmpeg'e master playlist verilirse her koşulda en yüksek
-  /// çözünürlüğü seçer ve düşük bantta 5 dakikalık pencere yetmez.
+  /// Şartname 4.2: kayıt, bağlantı kalitesine EN UYGUN varyanttan alınmalıdır —
+  /// ffmpeg'e master playlist verilirse her koşulda en yüksek çözünürlüğü
+  /// seçer ve QoD'siz 256 kbit'lik hatta 1080p indirmek ~68 dakika sürer.
   ///
-  /// Ölçüm QoD adımında zaten alınıyor ([bandwidthAfter]); o yoksa (QoD
-  /// atlandıysa) burada bir kez ölçülür. Hiçbir ölçüm/çözümleme yapılamazsa
-  /// master URL'e düşeriz — kayıt hiç başlamamaktansa ffmpeg kendi seçsin.
+  /// Seçim **QoD durumuna** bakar, bant genişliği ölçümüne değil: yarışma
+  /// SIM'inde ara bir hız yok (QoD'siz 256 kbit, QoD'li 8 Mbit), dolayısıyla
+  /// ölçmenin bir şeyi değiştirdiği bir senaryo yok. Ayrıca ölçüm QoD'siz
+  /// durumda zaten zaman aşımına düşüyordu ve "ölçüm yok" hâli en yükseği
+  /// seçtiriyordu — yani ölçüme dayanmak tam da yanlış anda yanlış kararı
+  /// veriyordu.
+  ///
+  /// Çözümleme yapılamazsa master URL'e düşeriz — kayıt hiç başlamamaktansa
+  /// ffmpeg kendi seçsin.
   Future<String> _kayitKaynagi(String masterUrl) async {
-    var olcum = (bandwidthAfter ?? bandwidthBefore)?.mbps;
-    olcum ??= (await _bandwidthProbe.probe(masterUrl))?.mbps;
-
-    final variant = await _hlsVariants.resolveVariant(masterUrl, olcum);
+    final variant = await _hlsVariants.resolveVariant(
+      masterUrl,
+      qodAktif: qodSession.succeeded,
+    );
     if (variant == null) return masterUrl;
 
     secilenVaryant = variant;
@@ -421,9 +428,14 @@ class SessionController extends ChangeNotifier {
         r.aiStatus = response.status;
         if (response.result != null) {
           r.aiResult = response.result;
-          r.resultsSha256 = sha256
-              .convert(utf8.encode(jsonEncode(response.result!.raw)))
-              .toString();
+          // Parmak izi BİR KEZ, sonuç geldiği anda hesaplanır (ekran her
+          // çizilişinde değil). Lifebox'a yüklenecek metnin ta kendisinden
+          // üretiliyor — dosya ile hash'in ayrışması mümkün değil.
+          final parmakIzi = ResultsFingerprint.of(response.result!.raw);
+          r.resultsJsonMinified = parmakIzi.json;
+          r.resultsMd5 = parmakIzi.md5Hex;
+          r.resultsSha256 =
+              sha256.convert(utf8.encode(parmakIzi.json)).toString();
         }
       }
     } catch (e) {
@@ -462,20 +474,47 @@ class SessionController extends ChangeNotifier {
     });
   }
 
+  static String _sonucDosyaAdi(RecordingItem item) =>
+      'results_${item.name.replaceAll('.mp4', '')}.json';
+
   /// results.json'u dışa aktarır: Android'de dosya olarak paylaşım menüsüne
   /// (Drive/WhatsApp/Dosyalar -> indirme), web önizlemede panoya. Dönen metin
   /// kullanıcıya snackbar ile gösterilir.
+  ///
+  /// İçerik **boşluksuz** yazılır — organizasyonun istediği biçim bu ve
+  /// parmak izi de tam olarak bu metinden üretiliyor.
   Future<String> exportResultsJson(RecordingItem item) async {
-    final raw = item.aiResult?.raw;
-    if (raw == null) return 'Henüz sonuç yok';
-    final jsonStr = const JsonEncoder.withIndent('  ').convert(raw);
+    final jsonStr = item.resultsJsonMinified;
+    if (jsonStr == null) return 'Henüz sonuç yok';
     if (kIsWeb) {
       await Clipboard.setData(ClipboardData(text: jsonStr));
       return 'results.json panoya kopyalandı (web önizleme)';
     }
-    final dosyaAdi = 'results_${item.name.replaceAll('.mp4', '')}.json';
-    await _lifeboxService.shareJson(fileName: dosyaAdi, content: jsonStr);
+    await _lifeboxService.shareJson(
+      fileName: _sonucDosyaAdi(item),
+      content: jsonStr,
+    );
     return 'results.json paylaşım menüsünde — Dosyalar\'a veya Drive\'a kaydedebilirsin';
+  }
+
+  /// results.json + MD5 parmak izini **tek paylaşımda** Lifebox'a gönderir.
+  ///
+  /// Canlı demoda video'dan sonraki ikinci (ve son) Lifebox adımı: AI sonucu
+  /// geldiğinde hakem bu ikisini birlikte indirip hash'i doğrulayabilsin.
+  Future<String> shareResultsBundle(RecordingItem item) async {
+    final jsonStr = item.resultsJsonMinified;
+    final hash = item.resultsMd5;
+    if (jsonStr == null || hash == null) return 'Henüz sonuç yok';
+    if (kIsWeb) {
+      await Clipboard.setData(ClipboardData(text: '$jsonStr\n$hash'));
+      return 'Sonuç ve parmak izi panoya kopyalandı (web önizleme)';
+    }
+    await _lifeboxService.shareResultsWithHash(
+      jsonFileName: _sonucDosyaAdi(item),
+      jsonIcerik: jsonStr,
+      hash: hash,
+    );
+    return 'results.json + MD5 paylaşım menüsünde — Lifebox\'ı seçin';
   }
 
   /// ÜST ÇUBUK "çıkış" butonu. NvScreen, `nvSession.isVerified` true kaldığı
@@ -487,6 +526,17 @@ class SessionController extends ChangeNotifier {
     if (recording) {
       _recordingService.stopRecording();
     }
+    // QoD oturumunu kapatmayı dene (en iyi çaba, sonucu beklemiyoruz).
+    // Oturum bitene kadar aynı cihaz için ikinci oturum açılamıyor (409) ve
+    // süre 20 dakika: kullanıcı çıkıp yeniden girerse temiz başlayabilmeli.
+    // Ayrıca hücresel bağlamayı da bırak — asılı kalırsa uygulamanın tüm
+    // ağını öldürüyor (bkz. cellular_network_service.dart).
+    final cikanFlowId = nvSession.flowId;
+    if (cikanFlowId != null) {
+      unawaited(_qodService.stop(cikanFlowId));
+    }
+    unawaited(_cellular.unbind());
+
     nvSession = const NvSession();
     nvLoading = false;
     qodSession = const QodSession();
@@ -505,7 +555,48 @@ class SessionController extends ChangeNotifier {
     _loadExistingRecordings();
   }
 
-  String get streamUrl => AppConfig.testHlsUrl;
+  /// Kayıt alınacak HLS akışının adresi.
+  ///
+  /// Final günü organizasyon FARKLI bir adres verecek (protokol aynı, yalnızca
+  /// base'den sonrası değişiyor) ve bunu canlı demoda, uygulamayı yeniden
+  /// derlemeden girebilmemiz gerekiyor — bu yüzden sabit değil, çalışma
+  /// zamanında değiştirilebilir bir alan. Başlangıç değeri `--dart-define`
+  /// ile de verilebiliyor (bkz. [AppConfig.testHlsUrl]).
+  String _streamUrl = AppConfig.testHlsUrl;
+
+  String get streamUrl => _streamUrl;
+
+  /// Varsayılan (Faz 2 test) akışında mıyız — UI "varsayılana dön" butonunu
+  /// buna göre etkinleştirir.
+  bool get streamUrlVarsayilan => _streamUrl == AppConfig.testHlsUrl;
+
+  void setStreamUrl(String url) {
+    final temiz = url.trim();
+    if (temiz.isEmpty || temiz == _streamUrl) return;
+    _streamUrl = temiz;
+    // Yeni akışın varyantları farklı olabilir; önceki seçim artık geçersiz.
+    secilenVaryant = null;
+    _notify();
+  }
+
+  void streamUrlVarsayilanaDon() => setStreamUrl(AppConfig.testHlsUrl);
+
+  /// Girilen adres HLS gibi mi görünüyor? `null` = sorun yok.
+  ///
+  /// Yumuşak doğrulama: kaydı ENGELLEMEZ, yalnızca uyarır. Final günü
+  /// beklemediğimiz bir biçim gelirse uygulamanın kilitlenmesini istemiyoruz.
+  static String? streamUrlUyarisi(String url) {
+    final temiz = url.trim();
+    if (temiz.isEmpty) return 'Adres boş olamaz';
+    final uri = Uri.tryParse(temiz);
+    if (uri == null || !uri.hasScheme || !(uri.isScheme('http') || uri.isScheme('https'))) {
+      return 'Adres http:// veya https:// ile başlamalı';
+    }
+    if (!temiz.contains('.m3u8')) {
+      return 'HLS playlist adresleri genelde .m3u8 ile biter — emin misin?';
+    }
+    return null;
+  }
 
   /// StepTimeline için 1..7 arası ilerleme göstergesi (01 Doğrula .. 07 İz).
   int get currentStepIndex {

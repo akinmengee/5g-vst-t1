@@ -7,8 +7,8 @@ import '../widgets/accent_card.dart';
 import '../widgets/empty_state.dart';
 
 /// Open Gateway Demo UX Kılavuzu → "07 Trace": her NV/QoD/upload/AI çağrısını
-/// şeffaf şekilde gösterir. [TraceLog]'u dinler (gerçek modda Dio
-/// interceptor'ından, mock modda servislerin kendi kayıtlarından beslenir).
+/// şeffaf şekilde gösterir. [TraceLog]'u dinler; kayıtlar Dio
+/// interceptor'ından, yani gerçekten atılan HTTP isteklerinden gelir.
 class TraceTab extends StatelessWidget {
   final TraceLog traceLog;
 

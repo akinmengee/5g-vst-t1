@@ -28,9 +28,13 @@ class _NvScreenState extends State<NvScreen> {
   @override
   void initState() {
     super.initState();
-    final sandbox = AppConfig.sandboxTestPhoneNumber;
+    // Varsayılan boş: yarışma günü elimizdeki SIM'in numarası girilecek.
+    // `--dart-define=PHONE=+90...` verilmişse ülke kodu ayıklanıp doldurulur.
+    final onDolu = AppConfig.varsayilanTelefon;
     _localNumberController = TextEditingController(
-      text: sandbox.startsWith(_countryCode) ? sandbox.substring(_countryCode.length) : sandbox,
+      text: onDolu.startsWith(_countryCode)
+          ? onDolu.substring(_countryCode.length)
+          : onDolu,
     );
   }
 
@@ -56,7 +60,7 @@ class _NvScreenState extends State<NvScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       // authorize_url geldiyse sözleşme gereği uygulama-içi WebView'de açılır
-      // (mock modda url null olduğundan bu adım kendiliğinden atlanır).
+      // (Turkcell'in kendi onay/doğrulama sayfası, hücresel ağ üzerinden).
       if (session.status == NvStatus.authorizing &&
           session.authorizeUrl != null &&
           !_webViewOpen) {

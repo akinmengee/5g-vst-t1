@@ -5,7 +5,7 @@ imaj `/app/data/input/video.mp4` okur, `/app/data/output/results.json` yazar,
 kendi kendine sonlanır. Backend bu imajı host process olarak `docker run` ile
 tetikler (S2/G3 kararı — Docker-in-Docker gerekmez).
 
-Sahte (mock) bir çalıştırıcı YOKTUR: AI çıktısı puanlanan şeyin ta kendisi,
+Alternatif bir çalıştırıcı YOKTUR: AI çıktısı puanlanan şeyin ta kendisi,
 sabit bir fixture döndürmek gerçek davranışı gizler. Tek yol gerçek imajdır.
 """
 

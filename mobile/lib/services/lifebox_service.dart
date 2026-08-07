@@ -76,4 +76,41 @@ class LifeboxService {
       ),
     );
   }
+
+  /// AI sonucunu ve parmak izini **TEK paylaşım işleminde** gönderir.
+  ///
+  /// Neden tek işlem: Lifebox'ın resmî API/SDK'sı paylaşılmadığı için hedef
+  /// klasörü seçemiyoruz — ikisini aynı anda göndermek, aynı yere düşmeleri
+  /// için elimizdeki en iyi güvence. Ayrıca canlı demoda tek dokunuş yeterli
+  /// oluyor, iki ayrı adımı karıştırma riski kalmıyor.
+  ///
+  /// [jsonIcerik] ile [hash] birbirine bağlıdır: hash tam olarak bu metnin
+  /// MD5'i olmalı (bkz. `ResultsFingerprint.of`), yoksa hakem karşılaştırması
+  /// tutmaz.
+  Future<void> shareResultsWithHash({
+    required String jsonFileName,
+    required String jsonIcerik,
+    required String hash,
+  }) async {
+    final dir = await getTemporaryDirectory();
+
+    final jsonFile = File('${dir.path}/$jsonFileName');
+    await jsonFile.writeAsString(jsonIcerik);
+
+    // Yalnızca hash — hakem `md5sum results.json` çıktısıyla birebir
+    // karşılaştırabilsin diye başka hiçbir metin yok.
+    final hashFileName = '$jsonFileName.md5.txt';
+    final hashFile = File('${dir.path}/$hashFileName');
+    await hashFile.writeAsString(hash);
+
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [
+          XFile(jsonFile.path, mimeType: 'application/json'),
+          XFile(hashFile.path, mimeType: 'text/plain'),
+        ],
+        text: 'VST-T1 · TEKNOFEST 5G — AI sonucu + MD5 parmak izi',
+      ),
+    );
+  }
 }

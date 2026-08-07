@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../config/app_config.dart';
 import '../models/ai_result.dart';
 import '../models/recording_item.dart';
+import '../services/results_fingerprint.dart';
 import '../state/session_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/accent_card.dart';
@@ -334,9 +335,13 @@ class _ResultContent extends StatelessWidget {
               children: _groupedDetections(result.detections),
             ),
           ),
-          if (item.resultsSha256 != null) ...[
+          if (item.resultsMd5 != null) ...[
             const SizedBox(height: 16),
-            Entrance(delayMs: 240, child: _sha256Card(context, item.resultsSha256!)),
+            Entrance(delayMs: 240, child: _Md5Card(item: item)),
+          ],
+          if (item.resultsSha256 != null) ...[
+            const SizedBox(height: 12),
+            Entrance(delayMs: 280, child: _sha256Card(context, item.resultsSha256!)),
           ],
           const SizedBox(height: 16),
           Theme(
@@ -422,23 +427,38 @@ class _ResultContent extends StatelessWidget {
     );
   }
 
-  /// mobile-integration.md adım 8: results JSON'unun SHA256'sı ekranda
-  /// gösterilir (resmi akış diyagramı adım 17 — imaj hash'inden ayrı bir şey).
+  /// results.json'un SHA256'sı — **bilgi amaçlı**.
+  ///
+  /// Etiketin bu kadar açık olması bilinçli: Final Yarışma Senaryosu'ndaki
+  /// SHA256 gerekliliği *"ürettikleri **imajın** SHA256 parmak izi"* — yani
+  /// Docker imajına ait, ayrıca ibraz edilen bambaşka bir değer. Ekranda kısaca
+  /// "SHA256" yazsaydı hakem bunu imaj hash'i sanabilirdi.
   Widget _sha256Card(BuildContext context, String hash) {
     return AccentCard(
-      accentColor: AppTheme.success,
+      accentColor: AppTheme.idle,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Row(
-                children: [
-                  Icon(Icons.fingerprint, size: 20, color: AppTheme.navy),
-                  SizedBox(width: 8),
-                  Text('Sonuç SHA256', style: TextStyle(fontWeight: FontWeight.w700)),
-                ],
+              const Expanded(
+                child: Row(
+                  children: [
+                    Icon(Icons.tag, size: 18, color: AppTheme.inkSoft),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'results.json SHA256 (bilgi amaçlı)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: AppTheme.inkSoft,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               IconButton(
                 icon: const Icon(Icons.copy, size: 18),
@@ -467,7 +487,7 @@ class _ResultContent extends StatelessWidget {
                 fontSize: 11.5,
                 fontFamily: AppTheme.monoFamily,
                 height: 1.5,
-                color: AppTheme.ink,
+                color: AppTheme.inkSoft,
               ),
             ),
           ),
@@ -760,6 +780,124 @@ IconData iconFor(String? etiket) {
 String prettyLabel(String? raw) {
   if (raw == null || raw.isEmpty) return '-';
   return raw.replaceAll('_', ' ');
+}
+
+/// results.json'un MD5 parmak izi + Lifebox paylaşımı.
+///
+/// Organizasyonun istediği biçim: JSON boşluksuz yazılır, MD5'i alınır, ilk
+/// 7 karakter gösterilir. Kalan 25 karakter parola alanı gibi maskeli durur;
+/// karta dokununca açılır. Gizlemenin amacı güvenlik değil okunabilirlik —
+/// 32 karakterlik bir dizi ekranda gereksiz yer kaplıyor ve jüriye okunması
+/// gereken şey zaten ilk 7 karakter (git'in kısa commit hash mantığı).
+class _Md5Card extends StatefulWidget {
+  final RecordingItem item;
+
+  const _Md5Card({required this.item});
+
+  @override
+  State<_Md5Card> createState() => _Md5CardState();
+}
+
+class _Md5CardState extends State<_Md5Card> {
+  bool _acik = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final hash = widget.item.resultsMd5!;
+    return AccentCard(
+      accentColor: AppTheme.success,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.fingerprint, size: 20, color: AppTheme.navy),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text('Sonuç parmak izi (MD5)',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 18),
+                tooltip: 'Tam değeri kopyala',
+                visualDensity: VisualDensity.compact,
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: hash));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('MD5 panoya kopyalandı')),
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // Dokununca aç/kapa — parola alanı mantığı.
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _acik = !_acik),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.background,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _acik ? hash : ResultsFingerprint.maskele(hash),
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontFamily: AppTheme.monoFamily,
+                        height: 1.4,
+                        color: AppTheme.ink,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    _acik ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                    size: 17,
+                    color: AppTheme.inkSoft,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _acik
+                ? 'Gizlemek için dokun'
+                : 'Tam değeri görmek için dokun — ilk 7 karakter kısa kimlik',
+            style: const TextStyle(fontSize: 11, color: AppTheme.inkSoft),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.navy,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onPressed: () async {
+                final mesaj = await context
+                    .read<SessionController>()
+                    .shareResultsBundle(widget.item);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(SnackBar(content: Text(mesaj)));
+                }
+              },
+              icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+              label: const Text('results.json + MD5\'i Lifebox\'a gönder'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// AI işlerken gösterilen bekleme durumu — canlı bir sayaçla ne kadar

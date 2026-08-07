@@ -12,12 +12,15 @@ gömülmez (OGW_Teknofest.pdf "Önemli Notlar").
 """
 
 import base64
+import logging
 from urllib.parse import urlencode
 
 import httpx
 
 from app.core.config import settings
 from app.services.network.interface import OpenGatewayError, QodResult, TokenResult
+
+logger = logging.getLogger(__name__)
 
 # /oauth2/authorize'daki ilk istekte HEM NV HEM QoD scope'u birlikte istenir —
 # böylece NV sırasında alınan tek access_token (5 dk içinde) QoD için de
@@ -44,8 +47,10 @@ class TurkcellOpenGatewayClient:
             raise RuntimeError(
                 "TurkcellOpenGatewayClient için eksik ayarlar: " + ", ".join(missing)
             )
-        # http_client parametresi test edilebilirlik için: testler
-        # httpx.MockTransport'lu bir AsyncClient enjekte eder.
+        # http_client parametresi test edilebilirlik için: testler, isteği ağa
+        # çıkarmadan yakalayan bir taşıyıcıya (transport) sahip AsyncClient
+        # enjekte eder — böylece istek şekli gerçek Turkcell'e dokunmadan
+        # doğrulanabilir (bkz. tests/test_turkcell_client.py).
         self._client = http_client or httpx.AsyncClient(
             base_url=settings.turkcell_api_base_url, timeout=10.0
         )
@@ -98,14 +103,57 @@ class TurkcellOpenGatewayClient:
             "/quality-on-demand/v1/sessions",
             headers={"Authorization": f"Bearer {access_token}"},
             json={
-                "duration": 360,
+                # Süre artık sabit değil: oturum bittiği anda cihazın veri
+                # bağlantısı kopuyor (7 Ağustos ölçümü), bu yüzden demo
+                # süresini kapsayacak kadar uzun olmalı. bkz. config.py.
+                "duration": settings.qod_duration_seconds,
                 "applicationServer": {"ipv4Address": "0.0.0.0/0"},
                 "qosProfile": "teknofest2026",
             },
         )
         self._raise_for_status(resp)  # 409 dahil her non-2xx OpenGatewayError olur
         body = resp.json()
-        return QodResult(session_id=body.get("sessionId"), qos_status=body.get("qosStatus"))
+        verilen = body.get("duration")
+        if verilen is not None and verilen != settings.qod_duration_seconds:
+            # Turkcell talebi kırptı: bağlantı BU süre sonunda kopacak.
+            logger.warning(
+                "QoD süresi kırpıldı: %s sn istendi, %s sn verildi — "
+                "veri bağlantısı %s sn sonra kopabilir.",
+                settings.qod_duration_seconds,
+                verilen,
+                verilen,
+            )
+        else:
+            logger.info("QoD oturumu açıldı: %s sn", verilen)
+        return QodResult(
+            session_id=body.get("sessionId"),
+            qos_status=body.get("qosStatus"),
+            duration=verilen,
+        )
+
+    async def stop_qod_session(self, access_token: str, session_id: str) -> bool:
+        # EN İYİ ÇABA: bu endpoint Turkcell'in paylaştığı spec'te YOK
+        # (yalnızca POST /sessions var), ama CAMARA standardında var ve
+        # uygulanmış olabilir. Desteklenmiyorsa 404/405 gelir — akışı
+        # etkilememesi için hiçbir durumda istisna fırlatmıyoruz.
+        try:
+            resp = await self._client.delete(
+                f"/quality-on-demand/v1/sessions/{session_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        except Exception:
+            logger.warning("QoD oturumu kapatılamadı (ağ hatası): %s", session_id)
+            return False
+        if resp.status_code // 100 == 2:
+            logger.info("QoD oturumu kapatıldı: %s", session_id)
+            return True
+        logger.info(
+            "QoD oturumu kapatma desteklenmiyor/başarısız (HTTP %s): %s — "
+            "oturum kendi süresi dolunca sonlanacak.",
+            resp.status_code,
+            session_id,
+        )
+        return False
 
     @staticmethod
     def _raise_for_status(resp: httpx.Response) -> None:

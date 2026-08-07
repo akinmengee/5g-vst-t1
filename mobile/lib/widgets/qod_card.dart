@@ -109,9 +109,29 @@ class QodCard extends StatelessWidget {
           if (session.outcome == QodOutcome.failed) ...[
             const SizedBox(height: 8),
             const Text(
-              'QoD açılamadı — akış düşük kalitede devam ediyor (puan kaybı yok, '
-              'sadece +5 kaçtı).',
+              'QoD açılamadı — kayıt 240p\'ye düşecek (256 kbit\'te 1080p '
+              'indirilemiyor). Puan kaybı yok ama AI sonucu düşük kalitede olur.',
               style: TextStyle(fontSize: 12, color: AppTheme.inkSoft),
+            ),
+          ],
+          // Oturum bittiği anda cihazın veri bağlantısı kopuyor (7 Ağustos
+          // ölçümü). Turkcell talep ettiğimiz süreyi kırpabildiği için gerçekte
+          // verilen değeri gösteriyoruz: canlı demoda "ne kadar süremiz var"ı
+          // tahmin etmek yerine ekrandan okuyabilelim.
+          if (session.outcome == QodOutcome.success && session.duration != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.timer_outlined, size: 14, color: AppTheme.inkSoft),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    'Oturum süresi: ${session.duration} sn — kayıt ve yükleme '
+                    'bu süre içinde bitmeli.',
+                    style: const TextStyle(fontSize: 12, color: AppTheme.inkSoft),
+                  ),
+                ),
+              ],
             ),
           ],
           if (bandwidthMeasuring || bandwidthBefore != null) ...[

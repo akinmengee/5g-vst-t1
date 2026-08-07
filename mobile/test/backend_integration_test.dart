@@ -17,12 +17,20 @@ import 'package:teknofest_mobile/services/results_service.dart';
 /// Uygulamanın GERÇEK servis kodunu GERÇEK backend'e karşı çalıştırır —
 /// sözleşmenin iki tarafının da tuttuğunu kanıtlayan tek test budur.
 ///
+/// **NV doğrulaması burada otomatik test EDİLEMEZ.** Sahte onay sayfası
+/// kaldırıldığından (gerçek credential/SIM geldikten sonra, 7 Ağustos)
+/// `authorize_url` artık Turkcell'in kendi sayfasına gidiyor ve doğrulama
+/// yalnızca hücresel ağdaki gerçek bir cihazdan tamamlanabiliyor. Burada
+/// sınanan şey doğrulamanın SONUCU değil, backend sözleşmesinin şekli:
+/// login flow açıyor mu, adres Turkcell'e mi gidiyor, hatalar düzgün mü
+/// yüzeye çıkıyor, upload→job→polling zinciri tutuyor mu.
+///
 /// Backend ayakta değilse testler atlanır (takım arkadaşlarında ve CI'da
 /// kırmızı görünmesin diye):
 ///
 /// ```
 /// cd backend
-/// JOB_STORAGE_PATH=./.local-jobs USE_MOCK_5G=true python -m uvicorn app.main:app --port 8000
+/// JOB_STORAGE_PATH=./.local-jobs python -m uvicorn app.main:app --port 8000
 /// cd ../mobile && flutter test test/backend_integration_test.dart
 /// ```
 ///
@@ -33,24 +41,23 @@ void main() {
     backendAyakta = await _saglikKontrolu();
   });
 
-  test('NV: login -> WebView yonlendirmesi -> verified', () async {
+  test('NV: login flow acar ve authorize_url GERCEK Turkcelle gider', () async {
     if (!backendAyakta) return;
     final nv = NvService();
 
-    final login = await nv.login(AppConfig.sandboxTestPhoneNumber);
+    final login = await nv.login(_testNumarasi);
     expect(login.success, isTrue, reason: login.errorMessage);
     expect(login.flowId, isNotNull);
     expect(login.authorizeUrl, isNotNull);
 
-    // WebView açılmadan önce sonuç beklenmemeli.
+    // Mock kaldırıldıktan sonraki en kritik güvence: WebView'in açacağı adres
+    // kendi backend'imiz DEĞİL, Turkcell'in authorize endpoint'i olmalı.
+    expect(login.authorizeUrl, contains('/oauth2/authorize'));
+    expect(login.authorizeUrl, isNot(contains(AppConfig.backendBaseUrl)));
+
+    // Doğrulama tamamlanmadan sonuç beklenmemeli.
     final ilkDurum = await nv.fetchStatus(login.flowId!);
     expect(ilkDurum.status, 'pending');
-
-    // WebView'in yaptığının aynısı: authorize_url'i aç, yönlendirmeleri takip et.
-    await _webViewGibiAc(login.authorizeUrl!);
-
-    final sonDurum = await nv.fetchStatus(login.flowId!);
-    expect(sonDurum.status, 'verified');
   });
 
   test('NV: bilinmeyen flow_id 404 -> error (yeniden giris istenir)', () async {
@@ -69,18 +76,23 @@ void main() {
     expect(login.errorMessage, isNotNull);
   });
 
-  test('QoD: verified flow ile oturum acilir', () async {
+  test('QoD: dogrulanmamis flowda cokmez, success:false doner', () async {
     if (!backendAyakta) return;
-    final flowId = await _dogrulanmisFlow();
+    // Gerçek doğrulama olmadan access_token yok, dolayısıyla QoD açılamaz.
+    // Sözleşme (Final Senaryosu md. 3): QoD başarısızlığı puan kaybettirmez ve
+    // akışı KİLİTLEMEZ — HTTP hatası değil, {success:false} dönmeli.
+    final flowId = await _flowAc();
 
     final oturum = await QodService().start(flowId);
-    expect(oturum.outcome, QodOutcome.success);
-    expect(oturum.sessionId, isNotNull);
+    expect(oturum.outcome, QodOutcome.failed);
   });
 
   test('Video: upload -> job -> polling sozlesmesi tutar', () async {
     if (!backendAyakta) return;
-    final flowId = await _dogrulanmisFlow();
+    // Upload yalnızca flow'un VAR olmasını şart koşuyor ("verified" değil):
+    // demo günü NV flaky olursa video→AI→sonuç hattı yine çalışabilsin diye
+    // bilinçli bir tasarım (bkz. routes_videos.py).
+    final flowId = await _flowAc();
     final results = ResultsService();
 
     // Sahte gövde: burada sınanan şey AI'ın NE BULDUĞU değil,
@@ -141,17 +153,12 @@ Future<bool> _saglikKontrolu() async {
   }
 }
 
-/// WebView'in yaptığı tek şey: adresi aç ve yönlendirmeleri takip et.
-Future<void> _webViewGibiAc(String authorizeUrl) async {
-  await Dio().get(
-    authorizeUrl,
-    options: Options(followRedirects: true, validateStatus: (_) => true),
-  );
-}
+/// Test numarası — yalnızca backend sözleşmesini sınamak için, doğrulama
+/// beklenmiyor (o gerçek SIM + hücresel ağ gerektiriyor).
+const _testNumarasi = '+905390000020';
 
-Future<String> _dogrulanmisFlow() async {
-  final nv = NvService();
-  final login = await nv.login(AppConfig.sandboxTestPhoneNumber);
-  await _webViewGibiAc(login.authorizeUrl!);
+/// Doğrulanmamış ama VAR olan bir flow açar. Upload bunun için yeterli.
+Future<String> _flowAc() async {
+  final login = await NvService().login(_testNumarasi);
   return login.flowId!;
 }

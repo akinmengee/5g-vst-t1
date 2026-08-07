@@ -6,10 +6,11 @@ ile döner → backend code'u token'a çevirir → token ile NV verify ve QoD
 sessions çağrıları yapılır. Eski tek-metotlu "verify_number() -> bool" tasarımı
 bu protokolle şekil olarak uyuşmadığı için değiştirildi (plan bulgusu A8).
 
-USE_MOCK_5G, deploy zamanında bilinçli seçilen bir konfigürasyondur; bir
-"ortam tespiti" DEĞİLDİR. Gerçek TurkcellOpenGatewayClient başarısız olursa
-sessizce MockOpenGatewayClient'a düşülmez (bkz. mock_client.py'deki
-anti-cheat notu).
+Bu protokolün TEK implementasyonu vardır: TurkcellOpenGatewayClient. Sahte bir
+istemci ya da ona geçiş yapan bir anahtar yoktur — Turkcell çağrısı başarısız
+olursa hata olduğu gibi yüzeye çıkar, üretilmiş bir sonuçla maskelenmez.
+Protokolün ayrı bir tip olarak durmasının sebebi testlerin gerçek ağa çıkmadan
+route davranışını sınayabilmesidir (bkz. `tests/network_stubs.py`).
 """
 
 from typing import Protocol
@@ -40,6 +41,12 @@ class TokenResult(BaseModel):
 class QodResult(BaseModel):
     session_id: str | None = None
     qos_status: str | None = None  # 201 yanıtında beklenen değer: "REQUESTED"
+    # Turkcell'in GERÇEKTEN verdiği süre (saniye). Talep ettiğimizden farklı
+    # olabilir (spec: "Implementations can grant the requested session duration
+    # or set a different duration"). Bunu bilmek kritik: oturum bittiği anda
+    # cihazın veri bağlantısı kopuyor, yani bu değer "ne zaman kopacağız"
+    # sorusunun cevabı.
+    duration: int | None = None
 
 
 class OpenGatewayClient(Protocol):
@@ -64,5 +71,21 @@ class OpenGatewayClient(Protocol):
         409 dahil her non-2xx durumda OpenGatewayError fırlatır; "zaten aktif
         oturum başarı sayılır" gibi puanlama kuralları çağıranın (routes_qod)
         sorumluluğundadır.
+        """
+        ...
+
+    async def stop_qod_session(self, access_token: str, session_id: str) -> bool:
+        """DELETE /quality-on-demand/v1/sessions/{id} — EN İYİ ÇABA.
+
+        Turkcell'in paylaştığı `quality-on-demand.yaml` yalnızca `POST
+        /sessions` (createSession) içeriyor; silme operasyonu spec'te YOK.
+        Yine de CAMARA standardında bu endpoint var ve Turkcell onu
+        uygulamış OLABİLİR — desteklenmiyorsa 404/405 döner, o zaman
+        sessizce `False` döneriz ve akış etkilenmez.
+
+        Neden gerekli: oturum bitene kadar aynı cihaz için ikinci bir oturum
+        açılamıyor (409). 1200 sn'lik süreyle bu 20 dakikalık bir kilit
+        demek; uygulamayı kapatıp yeniden denemek isteyen kullanıcı için
+        temizlenebilmesi lazım.
         """
         ...

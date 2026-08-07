@@ -96,16 +96,26 @@ def test_qod_session_body_device_alani_icermiyor(monkeypatch):
         govde = json.loads(request.content)
         assert "device" not in govde
         assert govde == {
-            "duration": 360,
+            # Sabit değil: yarışma günü env'den ayarlanabilsin diye
+            # config'ten okunuyor (bkz. qod_duration_seconds).
+            "duration": settings.qod_duration_seconds,
             "applicationServer": {"ipv4Address": "0.0.0.0/0"},
             "qosProfile": "teknofest2026",
         }
-        return httpx.Response(201, json={"sessionId": "qod-1", "qosStatus": "REQUESTED"})
+        return httpx.Response(
+            201,
+            json={
+                "sessionId": "qod-1",
+                "qosStatus": "REQUESTED",
+                "duration": settings.qod_duration_seconds,
+            },
+        )
 
     client = _istemci(monkeypatch, handler)
     sonuc = asyncio.run(client.start_qod_session("tok-1"))
     assert sonuc.session_id == "qod-1"
     assert sonuc.qos_status == "REQUESTED"
+    assert sonuc.duration == settings.qod_duration_seconds
 
 
 def test_qod_409_status_code_ile_opengatewayerror_firlatir(monkeypatch):
@@ -121,3 +131,72 @@ def test_qod_409_status_code_ile_opengatewayerror_firlatir(monkeypatch):
         asyncio.run(client.start_qod_session("tok-1"))
     assert exc_info.value.status_code == 409
     assert exc_info.value.error_code == "CONFLICT"
+
+
+# ---------------------------------------------------------------------------
+# QoD oturum süresi ve erken sonlandırma (7 Ağustos bulgusu)
+#
+# ÖLÇÜM: Turkcell tarafında QoD oturumu sona erdiği ANDA cihazın veri oturumu
+# resetleniyor — public IP değişiyor ve açık tüm TCP bağlantıları ölüyor.
+# 3 bağımsız oturumda kopma, QoD başlangıcından tam 360 sn sonra gerçekleşti
+# (istenen duration da 360'tı). Bu yüzden süre artık yapılandırılabilir ve
+# Turkcell'in GERÇEKTEN verdiği süre yanıttan okunuyor.
+# ---------------------------------------------------------------------------
+
+
+def test_qod_verilen_sure_talep_edilenden_farkli_olabilir(monkeypatch):
+    """Turkcell süreyi kırparsa bunu bilmeliyiz: bağlantı O ZAMAN kopacak."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            201,
+            # Spec: "Implementations can grant the requested session duration
+            # or set a different duration" — talebimiz 1200 olsa da 360 verildi.
+            json={"sessionId": "qod-1", "qosStatus": "REQUESTED", "duration": 360},
+        )
+
+    client = _istemci(monkeypatch, handler)
+    sonuc = asyncio.run(client.start_qod_session("tok-1"))
+    assert sonuc.duration == 360, "kırpılmış süre olduğu gibi raporlanmalı"
+
+
+def test_qod_yanitinda_duration_yoksa_none_doner(monkeypatch):
+    """Alan opsiyonel — yoksa çökmemeli."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"sessionId": "qod-1", "qosStatus": "REQUESTED"})
+
+    client = _istemci(monkeypatch, handler)
+    assert asyncio.run(client.start_qod_session("tok-1")).duration is None
+
+
+def test_qod_stop_dogru_endpointe_delete_atar(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        assert request.url.path == "/quality-on-demand/v1/sessions/qod-1"
+        assert request.headers["Authorization"] == "Bearer tok-1"
+        return httpx.Response(204)
+
+    client = _istemci(monkeypatch, handler)
+    assert asyncio.run(client.stop_qod_session("tok-1", "qod-1")) is True
+
+
+def test_qod_stop_desteklenmiyorsa_istisna_firlatmaz(monkeypatch):
+    """Turkcell'in spec'inde DELETE YOK — 404/405 beklenen bir sonuç, hata değil.
+
+    Akışı bloklamaması kritik: bu yalnızca bir temizlik adımı.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(405, json={"status": 405, "code": "METHOD_NOT_ALLOWED"})
+
+    client = _istemci(monkeypatch, handler)
+    assert asyncio.run(client.stop_qod_session("tok-1", "qod-1")) is False
+
+
+def test_qod_stop_ag_hatasinda_bile_istisna_sizdirmaz(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("baglanti yok")
+
+    client = _istemci(monkeypatch, handler)
+    assert asyncio.run(client.stop_qod_session("tok-1", "qod-1")) is False

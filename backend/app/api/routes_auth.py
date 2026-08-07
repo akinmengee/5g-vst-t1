@@ -12,9 +12,8 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 
-from app.core.config import settings
 from app.schemas.auth import AuthStatusResponse, LoginRequest, LoginResponse
 from app.services.network.interface import OpenGatewayError
 from app.services.network.runtime import get_gateway_client
@@ -72,25 +71,6 @@ async def callback(
         flow.error_detail = "Beklenmeyen sunucu hatası."
     return HTMLResponse(
         "<html><body>Doğrulama tamamlandı, bu pencereyi kapatabilirsiniz.</body></html>"
-    )
-
-
-@router.get("/api/auth/mock-consent")
-async def mock_consent(state: str) -> RedirectResponse:
-    """Turkcell'in onay sayfasının yerine geçen sahte sayfa (SADECE mock mod).
-
-    Gerçek akışta kullanıcı Turkcell'in sayfasında onay verir ve Turkcell
-    `/api/auth/callback`'e yönlendirir. Burada o yönlendirmeyi backend kendisi
-    yapar; mobil tarafta hiçbir kod farkı yoktur — WebView yine `authorize_url`i
-    açar, yine callback'e düşer, yine status polling ile sonucu öğrenir.
-
-    Gerçek modda 404 döner: yarışma günü kazara canlıda bulunup sahte doğrulama
-    üretmesi mümkün olmasın (anti-cheat ilkesi: mock'a sessiz düşüş yok).
-    """
-    if not settings.use_mock_5g:
-        raise HTTPException(status_code=404, detail="Yalnızca mock modda kullanılabilir")
-    return RedirectResponse(
-        f"{settings.public_base_url}/api/auth/callback?code=mock-code&state={state}"
     )
 
 

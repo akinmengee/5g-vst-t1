@@ -33,6 +33,10 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
   bool _playerReady = false;
   String? _playerError;
 
+  /// Final günü organizasyonun vereceği yeni akış adresi buraya yapıştırılır.
+  late final TextEditingController _urlController =
+      TextEditingController(text: widget.controller.streamUrl);
+
   // Home <-> AI Result sekmeleri arasında geçişte oynatıcının (ve kayıt
   // durumunun görsel önizlemesinin) sıfırlanmaması için — TabBarView
   // varsayılan olarak görünmeyen sekmenin State'ini korumaz.
@@ -68,7 +72,27 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
     _playerController?.dispose();
+    _urlController.dispose();
     super.dispose();
+  }
+
+  /// Adres değişince açık oynatıcı eski akışı göstermeye devam etmesin.
+  void _resetPlayer() {
+    _playerController?.dispose();
+    _playerController = null;
+    _playerReady = false;
+    _playerError = null;
+  }
+
+  void _applyUrl(String url) {
+    widget.controller.setStreamUrl(url);
+    setState(_resetPlayer);
+  }
+
+  void _restoreDefaultUrl() {
+    widget.controller.streamUrlVarsayilanaDon();
+    _urlController.text = widget.controller.streamUrl;
+    setState(_resetPlayer);
   }
 
   @override
@@ -90,6 +114,8 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
               if (c.recording) const _RecChip(),
             ],
           ),
+          const SizedBox(height: 10),
+          _buildUrlField(c),
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
@@ -129,6 +155,81 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
           _buildRecordingsList(c),
         ],
       ),
+    );
+  }
+
+  // ---- Akış adresi ---------------------------------------------------------
+
+  /// Final günü organizasyon yeni bir akış adresi verecek (protokol aynı,
+  /// base'den sonrası değişiyor). Canlı demoda yeniden derleme yapamayacağımız
+  /// için adres buradan girilebiliyor; "Faz 2" butonu test akışına döndürür.
+  Widget _buildUrlField(SessionController c) {
+    final uyari = SessionController.streamUrlUyarisi(_urlController.text);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.link, size: 14, color: AppTheme.inkSoft),
+            const SizedBox(width: 5),
+            const Text(
+              'AKIŞ ADRESİ',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.6,
+                color: AppTheme.inkSoft,
+              ),
+            ),
+            const Spacer(),
+            if (!c.streamUrlVarsayilan)
+              TextButton(
+                onPressed: c.recording ? null : _restoreDefaultUrl,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                child: const Text('Faz 2 test yayını', style: TextStyle(fontSize: 11.5)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        TextField(
+          controller: _urlController,
+          // Kayıt sürerken adres değişmesin — ortada kaynak değiştirmek
+          // ffmpeg'i yarım kalmış bir dosyayla bırakır.
+          enabled: !c.recording,
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          style: const TextStyle(fontFamily: AppTheme.monoFamily, fontSize: 11.5),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            hintText: 'https://.../playlist.m3u8',
+            hintStyle: const TextStyle(fontSize: 11.5, color: AppTheme.inkSoft),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          onChanged: (v) {
+            _applyUrl(v);
+            setState(() {}); // uyarı metni anlık güncellensin
+          },
+        ),
+        if (uyari != null) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Icon(Icons.info_outline, size: 13, color: AppTheme.warning),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  uyari,
+                  style: const TextStyle(fontSize: 11, color: AppTheme.warning),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 
@@ -196,13 +297,47 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
           backgroundColor: AppTheme.danger,
           padding: const EdgeInsets.symmetric(vertical: 14),
         ),
-        onPressed: () => c.startRecording(c.streamUrl),
+        onPressed: () => _kaydiBaslat(c),
         icon: const Icon(Icons.fiber_manual_record, size: 18),
         label: Text(c.recordings.isEmpty
             ? 'Kaydı Başlat (maks. 5 dk)'
             : 'Yeni Kayıt Başlat (maks. 5 dk)'),
       ),
     );
+  }
+
+  /// QoD açılmadan kayda başlanıyorsa önce onay ister.
+  ///
+  /// Engellemiyoruz (kullanıcı bilerek devam edebilmeli) ama kazara olmasına
+  /// da izin vermiyoruz: QoD'siz hat 256 kbit ve kayıt zorunlu olarak 240p'ye
+  /// düşüyor. Hakem, Lifebox'a yüklediğimiz kaydı da ayrı bir inference'a
+  /// soktuğu için (Final Yarışma Senaryosu md. 5) bu doğrudan puan kaybı.
+  Future<void> _kaydiBaslat(SessionController c) async {
+    if (!c.qodSession.succeeded) {
+      final devam = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('QoD açılmadı'),
+          content: const Text(
+            'Bağlantı 256 kbit\'te kalacağı için kayıt 240p\'ye düşecek ve '
+            'AI sonucu düşük kalitede olacak.\n\n'
+            'Önce QoD kartından oturumu açman önerilir. Yine de devam edilsin mi?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Vazgeç'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Yine de kaydet'),
+            ),
+          ],
+        ),
+      );
+      if (devam != true) return;
+    }
+    await c.startRecording(c.streamUrl);
   }
 
   // ---- Kayıt listesi -------------------------------------------------------

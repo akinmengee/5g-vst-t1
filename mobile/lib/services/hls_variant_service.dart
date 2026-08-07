@@ -31,7 +31,7 @@ class HlsVariant {
   String toString() => '$etiket (${mbps.toStringAsFixed(2)} Mbps)';
 }
 
-/// Kaydedilecek HLS varyantını ölçülen bant genişliğine göre seçer.
+/// Kaydedilecek HLS varyantını **QoD durumuna göre** seçer.
 ///
 /// **Neden gerekli:** Şartname 4.2 — *"Mobil uygulamanın streaming sunucusuna
 /// bağlanıp anlık bant genişliğine en uygun videoyu stream etmesi
@@ -45,6 +45,20 @@ class HlsVariant {
 /// üzerinde doğrulandı: 1080p/240p listesinde ağ koşulundan bağımsız olarak
 /// 1080p seçiliyor.) Bu yüzden varyantı burada seçip ffmpeg'e doğrudan alt
 /// playlist URL'ini veriyoruz.
+///
+/// **Neden ölçüme değil QoD'ye bakıyoruz** (7 Ağustos kararı): Yarışma SIM'inin
+/// hızları sabit ve önceden biliniyor — QoD'siz 256 kbit/s, QoD'li 8 Mbit/s.
+/// Ölçüme dayalı seçim hem gereksiz hem tehlikeliydi: ölçüm QoD'siz durumda
+/// zaten zaman aşımına düşüyor ve "ölçüm yok" hâli en yüksek varyanta
+/// yönlendiriyordu (256 kbit'te 1080p = 68 dakika, ekran donmuş görünüyordu).
+///
+/// Kalite tercihi bilinçli olarak **agresif**: QoD varsa her zaman en yüksek.
+/// Akış VOD (`#EXT-X-PLAYLIST-TYPE:VOD` + `#EXT-X-ENDLIST`) olduğu için gerçek
+/// zamanlı yetişme zorunluluğu yok — 8 Mbit'lik hatta 9.16 Mbps'lik yayın
+/// inebilir, sadece video süresinden biraz uzun sürer (114 sn video ≈ 130 sn).
+/// Hakem, Lifebox'a yüklediğimiz kaydı da ayrı bir inference'a sokuyor (Final
+/// Yarışma Senaryosu md. 5), yani kaydın çözünürlüğü doğrudan puanlanıyor:
+/// 240p bir tercih değil, QoD hiç kurulamazsa devreye giren fallback'tir.
 class HlsVariantService {
   HlsVariantService({Dio? dio})
       : _dio = dio ??
@@ -54,21 +68,6 @@ class HlsVariantService {
             ));
 
   final Dio _dio;
-
-  /// Ölçüm ile varyant arasında bırakılan pay.
-  ///
-  /// Neden gerçek-zaman kapasitesi arıyoruz: kayıt penceresi 5 dakika ve
-  /// videonun uzunluğu önceden bilinmiyor — en kötü durumda videonun da ~5
-  /// dakika olduğunu varsaymalıyız, yani pencerede hiç bolluk yok. O yüzden
-  /// varyantın en az gerçek zamanlı indirilebilir olmasını şart koşuyoruz.
-  ///
-  /// Üstüne bu pay: bant genişliği örneği tek bir segment indirmesinden
-  /// geliyor (TCP yavaş başlangıcı + anlık dalgalanma), tam güvenilmez.
-  ///
-  /// Takas bilinçli: düşük varyanta gereksiz düşmek AI doğruluğunu düşürür
-  /// (240p'de sigara/telefon/kemer tespiti çok zor), ama kaydı hiç
-  /// tamamlayamamak canlı demonun AI puanının tamamını kaybettirir.
-  static const double guvenlikPayi = 0.85;
 
   /// Master playlist gövdesini varyantlara ayırır — **yüksekten düşüğe sıralı**.
   ///
@@ -140,25 +139,18 @@ class HlsVariantService {
     return sonuc;
   }
 
-  /// Ölçülen bant genişliğine sığan **en yüksek** varyantı seçer (standart ABR
-  /// başlangıç-varyant kuralı). Hiçbiri sığmıyorsa en düşüğünü döner: kayıt
-  /// hiç alınamamaktansa düşük çözünürlükle alınsın.
+  /// QoD açıksa **en yüksek**, değilse **en düşük** varyantı seçer.
   ///
-  /// [measuredMbps] null ise ölçüm yok demektir; bu durumda kalite kaybetmemek
-  /// için en yükseği seçeriz (ffmpeg'in zaten yapacağı şey).
-  static HlsVariant? selectForBandwidth(
-    List<HlsVariant> variants,
-    double? measuredMbps,
-  ) {
-    if (variants.isEmpty) return null;
-    if (measuredMbps == null || measuredMbps <= 0) return variants.first;
-
-    final butce = measuredMbps * guvenlikPayi;
-    for (final v in variants) {
-      // Liste yüksekten düşüğe sıralı — sığan ilk varyant en iyisidir.
-      if (v.mbps <= butce) return v;
-    }
-    return variants.last;
+  /// Ara bir değer yok, çünkü yarışma SIM'inde ara bir hız yok: QoD ya var
+  /// (8 Mbit → 1080p rahat iner) ya yok (256 kbit → 1080p 68 dakika sürer,
+  /// tek gerçekçi seçenek 240p).
+  static HlsVariant? selectForQod({
+    required List<HlsVariant> varyantlar,
+    required bool qodAktif,
+  }) {
+    if (varyantlar.isEmpty) return null;
+    // parseMaster listeyi yüksekten düşüğe sıralı döndürür.
+    return qodAktif ? varyantlar.first : varyantlar.last;
   }
 
   /// Kaydın hangi adresten alınacağını çözer.
@@ -166,13 +158,13 @@ class HlsVariantService {
   /// Ağ/parse hatasında sessizce master URL'e düşer — kayıt hiç başlamamaktansa
   /// ffmpeg'in kendi seçimiyle devam etmesi yeğdir.
   Future<HlsVariant?> resolveVariant(
-    String masterUrl,
-    double? measuredMbps,
-  ) async {
+    String masterUrl, {
+    required bool qodAktif,
+  }) async {
     try {
       final response = await _dio.get<String>(masterUrl);
       final variants = parseMaster(response.data ?? '', Uri.parse(masterUrl));
-      return selectForBandwidth(variants, measuredMbps);
+      return selectForQod(varyantlar: variants, qodAktif: qodAktif);
     } catch (_) {
       return null;
     }

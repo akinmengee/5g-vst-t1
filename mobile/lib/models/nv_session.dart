@@ -13,7 +13,8 @@ class NvSession {
   /// çağrılarının hepsi bu id ile yapılır.
   final String? flowId;
 
-  /// WebView'de olduğu gibi açılacak Turkcell OAuth adresi (mock'ta null).
+  /// WebView'de olduğu gibi açılacak Turkcell OAuth adresi. Login başarısız
+  /// olduysa null kalır.
   final String? authorizeUrl;
 
   final String? errorCode;

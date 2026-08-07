@@ -116,14 +116,20 @@ kopyalanmıyor).
 İki dış bağımlılık bilinçli olarak **arayüz arkasına** alındı, çünkü
 ikisi de geç aşamada gelecek/değişecek:
 
-| Bağımlılık | Arayüz | Şu anki (mock) | Gerçek |
-|---|---|---|---|
-| Turkcell Open Gateway (NV, QoD) | `OpenGatewayClient` | `MockOpenGatewayClient` (+ backend'in kendi sahte onay sayfası: `/api/auth/mock-consent`) | `TurkcellOpenGatewayClient` — kodlandı, hiç canlı test edilmedi |
-| AI çıkarımı | Ayrı Docker imajı, `docker run` ile tetiklenir | — (sahte çalıştırıcı artık YOK, AI çıktısı her zaman gerçek imajdan gelir) | `ai/` — build alıyor, GPU'da çalışıyor |
+| Bağımlılık | Arayüz | Durum |
+|---|---|---|
+| Turkcell Open Gateway (NV, QoD) | `OpenGatewayClient` | `TurkcellOpenGatewayClient` — **tek implementasyon**; gerçek credential + SIM ile canlı doğrulandı (7 Ağustos) |
+| AI çıkarımı | Ayrı Docker imajı, `docker run` ile tetiklenir | `ai/` — build alıyor, GPU'da çalışıyor; alternatif çalıştırıcı yok |
 
-`USE_MOCK_5G` tek bir ortam değişkeni; anti-cheat ilkesi gereği canlı
-demoda gerçek Turkcell çağrısı başarısız olursa **sessizce mock'a
-düşülmez** — bu bilinçli bir deploy-zamanı seçimidir, ortam tespiti değil.
+**Sahte (mock) hiçbir yol kalmadı (7 Ağustos).** Gerçek credential ve SIM
+geldikten sonra `USE_MOCK_5G`, `MockOpenGatewayClient`, `factory.py`,
+`/api/auth/mock-consent` ve (yalnızca onun kullandığı) `PUBLIC_BASE_URL`
+tamamen silindi. Gerekçe iki yönlü: artık gereksizler, ve FTR'nin anti-cheat
+maddesi açısından kodda "ortama göre farklı davranış" izlenimi verebilecek
+hiçbir şey kalmaması hakem incelemesinde şüpheyi sıfırlıyor. Bir çağrı
+başarısız olursa hata olduğu gibi yüzeye çıkar. Testler `tests/network_stubs.py`
+içindeki `FakeOpenGatewayClient` ile çalışır — o yalnızca `tests/` altında
+yaşar ve uygulamaya hiç girmez.
 
 ## Repo Yapısı
 
@@ -142,7 +148,7 @@ düşülmez** — bu bilinçli bir deploy-zamanı seçimidir, ortam tespiti değ
 │   │                               # AI imajıyla karışmasın). DooD: docker.sock + aynı
 │   │                               # host path'i mount edilir (bkz. backend/README.md Deploy)
 │   ├── app/api/routes_auth.py, routes_qod.py, routes_videos.py
-│   ├── app/services/network/      # Turkcell istemcisi + mock + mock-consent
+│   ├── app/services/network/      # Turkcell istemcisi (tek implementasyon)
 │   └── app/services/orchestration/ # Flow/Job registry, docker run tetikleyici
 │       # (eski app/services/vehicle_ai/ referans kodu kaldırıldı — ai/ VM'de
 │       # kanıtlandığı için referans ihtiyacı bitti, bkz. Bilinen Riskler)
@@ -278,11 +284,54 @@ tekrarlanıyor, tek seferlik bir ölçüm hatası değil.
   imaj için. `TOGG_MOBESE_FULL.mp4`'ün gerçek 4K (3840x2160) olduğu ve
   AI kodunun bu video için otomatik `atlama=4` (kare atlama) uyguladığı
   görüldü — süre ölçümü bu koşuşta paylaşılmadı, teyit edilmeli.
-- **Faz D — 7 Ağustos: Gerçek Ortam + Dondurma: BEKLEMEDE.** Gerçek
-  `TURKCELL_CLIENT_ID/SECRET` + kayıtlı `TURKCELL_REDIRECT_URI` ile
-  `USE_MOCK_5G=false`; gerçek telefon + gerçek SIM + hücresel veri ile tam
-  kuru prova. Aynı gün imaj dondurma + SHA256 ibrazı (mekanizma hâlâ
-  organizasyondan netleşmedi).
+- **Faz D — 7 Ağustos: Gerçek Ortam: BÜYÜK ÖLÇÜDE TAMAMLANDI.** Gerçek
+  `TURKCELL_CLIENT_ID/SECRET` + kayıtlı `TURKCELL_REDIRECT_URI` alındı;
+  gerçek SIM'li telefonla **NV ve QoD canlı çalıştı**. Ardından mock tamamen
+  kaldırıldı. Kalan: imaj dondurma + SHA256 ibrazı (kanal hâlâ netleşmedi) ve
+  yarışma SIM'iyle uçtan uca kuru prova.
+
+## 7 Ağustos Ölçümleri — Ağ Gerçekleri
+
+Yarışma SIM'i geldi ve iki şey kesinleşti; ikisi de mimariyi etkiledi.
+
+**1. Yarışma SIM'inin hızları:** QoD'siz **256 kbit/s**, QoD'li **8 Mbit/s**.
+Önceki testler takım arkadaşının normal hattından (60 Mbps) yapıldığı için bu
+darboğaz hiç görünmemişti — "video 3 saniyede indi" gözlemi oradan geliyordu.
+
+**2. Stream CANLI DEĞİL, VOD.** Alt playlist `#EXT-X-PLAYLIST-TYPE:VOD` +
+`#EXT-X-ENDLIST` içeriyor, 56 segment × 2 sn ≈ 114 sn sabit dosya. Yani
+gerçek zamanlı yetişme zorunluluğu YOK: 8 Mbit'lik hatta 9.16 Mbps'lik yayın
+inebiliyor, sadece video süresinden biraz uzun sürüyor.
+
+| | QoD'siz 256 kbit | QoD'li 8 Mbit |
+|---|---|---|
+| 1080p indir (~130 MB) | 68 dakika | 130 sn |
+| 240p indir (~4.1 MB) | 129 sn | 4 sn |
+
+**Sonuç — kalite seçimi QoD'ye bağlandı:** QoD açıksa 1080p, kapalıysa 240p.
+Bant genişliği ölçümüne dayalı eski mantık kaldırıldı; ölçüm artık yalnızca
+şartname 4.1'deki "QoD'nin etkisini kanıtla" göstergesini besliyor.
+240p bir tercih değil: Final Yarışma Senaryosu md. 5'e göre hakem **üç video**
+üzerinden inference koşuyor ve bunlardan biri *"stream'den kaydedilen ve
+Lifebox'tan indirilen video"* — yani bizim kaydımızın çözünürlüğü doğrudan
+puanlanıyor.
+
+**Bu ölçümlerin ortaya çıkardığı iki bug (düzeltildi):**
+- Hız ölçeri master playlist'teki **ilk** varyantın (1080p, 2.29 MB) segmentini
+  indiriyordu; 256 kbit'te 71 saniye sürüyor ama `receiveTimeout` 8 saniye →
+  ölçüm hep `null`. Artık **en düşük** varyantın segmenti kullanılıyor (~72 KB).
+- Varyant seçici "ölçüm yoksa **en yükseği** seç" diyordu → QoD'siz durumda
+  1080p → 68 dakika → ekran donmuş görünüyordu. **"QoD'siz sonuç dönmüyor"
+  şikayetinin sebebi tam olarak bu zincirdi.**
+
+**QoD oturumu bitince veri bağlantısı kopuyor (ÖLÇÜLDÜ).** Backend loglarındaki
+zaman damgaları, üç bağımsız oturumda bağlantının QoD başlangıcından tam
+`duration` kadar sonra öldüğünü gösterdi (358, 358, 360 sn — istenen süre
+360'tı; polling aralığı 2 sn olduğu için 358'ler de kesimin 360'ta olduğuyla
+tutarlı). Telefonun public IP'si her oturumda farklı bloğa atlıyor
+(`31.143.x` ↔ `178.240.x`), yani veri oturumu (PDN) yeniden kuruluyor.
+`QOD_DURATION_SECONDS` 360 → **1200** yapıldı ki kopma demo bittikten sonraya
+düşsün; Turkcell kırparsa gerçek değer loglanıp QoD kartında gösteriliyor.
 
 ## Bilinen Riskler
 
@@ -315,23 +364,17 @@ tekrarlanıyor, tek seferlik bir ölçüm hatası değil.
   Execute çalıştırıldı, **"EXECUTION COMPLETED – status: SUCCESS" alındı**
   — Faz C madde 4 tamamlandı (detay: Tamamlanan İşler / Yol Haritası).
   Yalnızca imaj donmadan hemen önce aynı imajla bir kez daha tekrarlanmalı.
-- **Gerçek Turkcell hiç canlı test edilmedi** — yalnızca request-shape
-  testleri (`test_turkcell_client.py`) ve mock-consent köprüsü var. **Netleşti
-  (organizasyon Q&A, 3 Ağustos toplantısı):** `TURKCELL_CLIENT_ID`/`SECRET`
-  yarışma esnasında DEĞİL, öncesinde, VM bilgilerinin paylaşıldığı yöntemle
-  (takıma özel, genel bir kanal değil) — organizasyon toplantıda "yarın
-  iletiriz" (yani 4 Ağustos) demişti. **6 Ağustos itibarıyla hâlâ
-  gelmedi** — söz verilen tarihten 2 gün geçti, 7 Ağustos 21:00 teslim
-  tarihine yalnızca 1 gün kaldı. Bugün (6 Ağustos) proaktif takip
-  gerekiyor. Not: `TURKCELL_REDIRECT_URI`'nin de Turkcell tarafında
-  önceden kayıtlı olması gerekiyor (muhtemelen client_id/secret ile birlikte
-  paketlenir). **NV'yi ilk kez Cuma günü (7 Ağustos) test edebileceğimiz Q&A'de
-  teyit edildi** (aynı gün cihaz/SIM de organizasyondan geliyor — bkz. Q&A
-  bölümü madde 4/1). **Nüans geri çekildi:** Daha önce "21:00 dondurması
-  yalnızca Docker imajını kapsıyor, backend değişiklikleri dışında kalabilir"
-  denmişti — Q&A'de "21:00 son teslim HER ŞEY için Cuma" notu düşüldüğünden
-  bu artık güvenilir bir varsayım değil. **En güvenli plan: Cuma 21:00'den
-  sonra hiçbir şeyi (backend dahil) değiştirmemek.**
+- ~~Gerçek Turkcell hiç canlı test edilmedi~~ **ÇÖZÜLDÜ (7 Ağustos).**
+  `TURKCELL_CLIENT_ID`/`SECRET` + kayıtlı `TURKCELL_REDIRECT_URI` alındı.
+  Telefonsuz ön doğrulama yapıldı (authorize `302` + callback'imize
+  yönlendirme = `client_id`/`redirect_uri` kayıtlı; token endpoint'i
+  `invalid_grant` = `client_secret` doğru, `invalid_client` değil), ardından
+  **gerçek SIM'li telefonla NV ve QoD canlı çalıştı.** Mock bu noktadan sonra
+  tamamen kaldırıldı.
+  **Hâlâ geçerli kısıt:** "21:00 son teslim HER ŞEY için Cuma" (Q&A) —
+  daha önce "dondurma yalnızca Docker imajını kapsar" varsayımı geri
+  çekilmişti. **En güvenli plan: Cuma 21:00'den sonra hiçbir şeyi (backend
+  dahil) değiştirmemek.**
 - **SHA256 mekanizması netleşti, ama henüz uygulanmadı.** Final Yarışma
   Senaryosu: yarışmacı kendi imajının SHA256'sını alıp **kendisi
   saklayacak/ibraz edecek**; hakem, inference'tan önce teslim aldığı

@@ -2,12 +2,14 @@
 
 orchestration/runtime.py'deki desenle aynı: modül seviyesinde global, lazy,
 kilitsiz. FastAPI lifespan başlangıcında bir kez çağrılır — böylece eksik
-Turkcell konfigürasyonu (gerçek client seçiliyken) uygulama açılışında anında
-görünür.
+Turkcell konfigürasyonu uygulama açılışında anında görünür, ilk istekte değil.
+
+Tek bir implementasyon vardır: [TurkcellOpenGatewayClient]. Alternatif bir
+istemci YOKTUR — seçim yapan bir fabrika katmanına da bu yüzden gerek yok.
 """
 
-from app.services.network.factory import get_open_gateway_client
 from app.services.network.interface import OpenGatewayClient
+from app.services.network.turkcell_client import TurkcellOpenGatewayClient
 
 _gateway_client: OpenGatewayClient | None = None
 
@@ -15,5 +17,5 @@ _gateway_client: OpenGatewayClient | None = None
 def get_gateway_client() -> OpenGatewayClient:
     global _gateway_client
     if _gateway_client is None:
-        _gateway_client = get_open_gateway_client()
+        _gateway_client = TurkcellOpenGatewayClient()
     return _gateway_client

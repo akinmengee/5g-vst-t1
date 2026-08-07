@@ -24,8 +24,17 @@ class RecordingItem {
   /// canlı sayaç bu andan itibaren sayar (yarışma kuralı: maks. 10 dk).
   DateTime? processingStartedAt;
 
-  /// Sonuç JSON'unun SHA256'sı — sonuç geldiğinde BİR KEZ hesaplanır
-  /// (ekran her çizilişinde yeniden hesaplanmaz).
+  /// Lifebox'a yüklenecek results.json metni: boşluksuz (minified).
+  /// Aşağıdaki iki hash tam olarak BU metinden üretilir — dosya ile parmak
+  /// izinin ayrışması bu sayede imkânsız.
+  String? resultsJsonMinified;
+
+  /// Organizasyonun istediği parmak izi: [resultsJsonMinified]'in MD5'i
+  /// (32 hex karakter). Ekranda ilk 7 karakteri açık, gerisi maskeli gösterilir.
+  String? resultsMd5;
+
+  /// Aynı metnin SHA256'sı — bilgi amaçlı. Yarışmanın istediği SHA256 Docker
+  /// İMAJINA ait ayrı bir değerdir, bu değil.
   String? resultsSha256;
 
   RecordingItem({

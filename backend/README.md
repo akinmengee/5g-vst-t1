@@ -28,32 +28,35 @@ Endpoint'ler:
 - `GET  /health` → `{"status": "ok"}`
 - `POST /api/auth/login` → NV akışını başlatır (`flow_id` + `authorize_url`)
 - `GET  /api/auth/callback` → Turkcell'in yönlendirdiği OAuth callback
-- `GET  /api/auth/mock-consent` → **yalnızca mock modda**: Turkcell'in onay
-  sayfasının yerine geçer, callback'e yönlendirir. Gerçek modda `404` döner.
-  Mobilin, gerçek Turkcell erişimi olmadan WebView akışını uçtan uca test
-  edebilmesini sağlar (mobil tarafta hiçbir kod farkı yok).
 - `GET  /api/auth/status/{flow_id}` → NV durumu (mobil poller)
-- `POST /api/qod/start` → QoD oturumu açar (201+REQUESTED = başarı)
+- `POST /api/qod/start` → QoD oturumu açar (201+REQUESTED = başarı), yanıtta
+  Turkcell'in GERÇEKTEN verdiği `duration` da döner
+- `POST /api/qod/stop` → oturumu erken kapatmayı dener (en iyi çaba, aşağıya bkz.)
 - `POST /api/videos/upload` → multipart video, `202` + `job_id`
 - `GET  /api/videos/{job_id}/result` → `PROCESSING|DONE|FAILED` + results.json
+
+**Sahte/mock bir mod YOKTUR.** Gerçek credential ve SIM geldikten sonra
+(7 Ağustos) `USE_MOCK_5G`, `MockOpenGatewayClient` ve `/api/auth/mock-consent`
+tamamen kaldırıldı: Turkcell çağrıları her zaman gerçeğe gider, hata olursa
+üretilmiş bir sonuçla maskelenmez. Testler `tests/network_stubs.py`'deki
+`FakeOpenGatewayClient` ile çalışır — o yalnızca `tests/` altında yaşar.
 
 ## Testler
 
 ```bash
 cd backend
-python -m pytest -q   # 46 test, hiç ML bağımlılığı gerektirmez
+python -m pytest -q   # 50 test, hiç ML bağımlılığı gerektirmez
 ```
 
 ## Ortam değişkenleri (`.env` veya shell)
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
-| `USE_MOCK_5G` | `true` | `false` → gerçek `TurkcellOpenGatewayClient` (yarışma günü). Sessiz fallback YOK. |
 | `TURKCELL_API_BASE_URL` | boş | `https://opengateway.turkcell.com.tr` |
-| `TURKCELL_CLIENT_ID` / `TURKCELL_CLIENT_SECRET` | boş | OAuth2 kimlik bilgileri (yalnızca backend'de tutulur). |
+| `TURKCELL_CLIENT_ID` / `TURKCELL_CLIENT_SECRET` | boş | OAuth2 kimlik bilgileri (yalnızca backend'de tutulur). Eksikse uygulama **açılışta** `RuntimeError` verir. |
 | `TURKCELL_REDIRECT_URI` | boş | Turkcell'e önceden kayıtlı callback: `http://<VM_IP>:8080/api/auth/callback` |
-| `PUBLIC_BASE_URL` | `http://localhost:8000` | Backend'e **dışarıdan** erişilen adres; yalnızca mock modda sahte onay sayfası için. Gerçek telefonla test ederken LAN IP'si olmalı (`http://192.168.1.50:8000`) — `localhost` telefonun kendisini işaret eder. |
-| `AI_DOCKER_IMAGE` | `teknofest-2026/vst-t1:latest` | Tetiklenecek AI imajı. Sahte çalıştırıcı yoktur; imaj her zaman gerçekten koşar. |
+| `QOD_DURATION_SECONDS` | `1200` | QoD oturum süresi. **Oturum bittiği anda cihazın veri bağlantısı kopuyor** (7 Ağustos ölçümü, 3 bağımsız oturumda saniyesi saniyesine) — bu yüzden süre tüm demoyu kapsamalı. Turkcell kırparsa gerçek değer loglanır. |
+| `AI_DOCKER_IMAGE` | `teknofest-2026/vst-t1:latest` | Tetiklenecek AI imajı. Alternatif çalıştırıcı yoktur; imaj her zaman gerçekten koşar. |
 | `JOB_STORAGE_PATH` | `/srv/jobs` | Job giriş/çıkış klasörleri. **Windows'ta override şart** (örn. `./.local-jobs`). |
 | `JOB_TIMEOUT_SECONDS` | `600` | AI çalıştırma üst sınırı (hakem limitiyle aynı: 10 dk). |
 | `FLOW_TTL_SECONDS` | `1200` | İşlem görmeyen NV/QoD flow'larının hafızadan düşme süresi. |
@@ -94,15 +97,26 @@ mount edilmesi şart (aksi halde AI container'ı boş/yanlış girdiyle sessizce
 
 ```bash
 docker build -t vst-t1-backend:latest backend/
+# Turkcell kimlik bilgileri gizli: -e yerine --env-file (docker inspect'te ve
+# shell geçmişinde görünmesin). Dosya repo DIŞINDA, chmod 600.
 docker run -d --name vst-t1-backend --restart unless-stopped \
   -p 8080:8080 \
+  --env-file /home/<kullanici>/backend.env \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /home/<kullanici>/jobs:/home/<kullanici>/jobs \
-  -e PUBLIC_BASE_URL=http://<VM_IP>:8080 \
-  -e USE_MOCK_5G=true \
-  -e JOB_STORAGE_PATH=/home/<kullanici>/jobs \
-  -e AI_DOCKER_IMAGE=teknofest-2026/vst-t1:latest \
   vst-t1-backend:latest
+```
+
+`backend.env` içeriği:
+
+```
+TURKCELL_API_BASE_URL=https://opengateway.turkcell.com.tr
+TURKCELL_CLIENT_ID=<organizasyondan>
+TURKCELL_CLIENT_SECRET=<organizasyondan>
+TURKCELL_REDIRECT_URI=http://<VM_IP>:8080/api/auth/callback
+JOB_STORAGE_PATH=/home/<kullanici>/jobs
+AI_DOCKER_IMAGE=teknofest-2026/vst-t1:latest
+LOG_LEVEL=INFO
 ```
 
 `--restart unless-stopped` VM reboot/crash sonrası backend'in kendiliğinden
@@ -143,6 +157,8 @@ ayağa kalkmasını sağlıyor — daha önceki çıplak `nohup` sürecinin eksi
       `--restart unless-stopped` ile crash-recovery doğrulandı
 - [x] Hakemin kendi Web UI'ından Execute çalıştırılıp
       `EXECUTION COMPLETED – status: SUCCESS` alındı (Faz C, 6 Ağustos)
+- [x] Turkcell `client_id`/`secret` alındı, gerçek NV + QoD canlı çalıştı
+      (7 Ağustos gecesi, gerçek SIM ile)
+- [x] Sahte (mock) mod tamamen kaldırıldı — tek istemci `TurkcellOpenGatewayClient`
 - [ ] AI imajı dondurulup SHA256 (image ID) alınacak (7 Ağustos 21:00'e yakın)
-- [ ] Gerçek Turkcell ile canlı test (`USE_MOCK_5G=false`) — `client_id`/
-      `secret` organizasyondan hâlâ bekleniyor
+- [ ] Yarışma SIM'i (256 kbit / QoD'li 8 Mbit) ile uçtan uca kuru prova
