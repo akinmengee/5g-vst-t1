@@ -418,6 +418,11 @@ YOLCU_SOFOR_DUP_ORAN = 0.5
 YOLCU_LOCK_MIN_CONF = 0.25
 YOLCU_SOFOR_YENIDEN_KAZANIM_ORANI = 0.20
 YOLCU_ARDISIK_GEREK = 2    # kilitleme icin 2 ardisik (islenen) kare yeterli
+# 07.08 hakem kurali (arka yolcu): ilk yolcu bulununca HEMEN yazilmaz --
+# bu sure boyunca IKINCI yolcu aranir. Ikinci bulunursa arka_koltuk_2
+# (ikincinin bulundugu saniyeyle), bulunamazsa arka_koltuk_1 (ilkin
+# saniyesiyle) yazilir.
+ARKA_IKINCI_BEKLEME_SN = float(os.environ.get("ARKA_IKINCI_BEKLEME_SN", "3.0"))
 # --- ON YOLCU sol-yari bolge kurali (07.08 lokal kaniti) ---
 # Arac ROI'sinin SOL yarisinda (arkadan bakista sol = on-yolcu tarafinin karsisi
 # DEGIL: kabin on-sol bolgesi), soforden yatayda belirgin ayrik, yuksek guvenli
@@ -1277,6 +1282,7 @@ def run_inference(video_path):
     arka_koltuk_1_dolu = False
     arka_koltuk_2_dolu = False
     arka_koltuk_son_sifirlama = 0.0
+    arka_bekleyen = None   # (ilk_yolcu_sn, conf) -- ikinci yolcu bekleme durumu
     ARKA_KOLTUK_SIFIRLAMA_SN = 6.0
 
     while cap.isOpened():
@@ -1668,6 +1674,15 @@ def run_inference(video_path):
             # tetikleyicili belirsizlik penceresini kullanir. Kirpimin SAG yarisinda kisi
             # aranir, sofor_kutusu ile cakisan (IOU) adaylar elenir. Bos olan ilk yer
             # (once arka_koltuk_2, sonra arka_koltuk_1 -- sag yari = arac sag tarafi) doldurulur.
+            # BEKLEME SURESI DOLDU: ikinci yolcu gelmedi -> tek yolcu kesin,
+            # arka_koltuk_1 ILK gorulme zamaniyla yazilir (hakem kurali).
+            if arka_bekleyen is not None and sn - arka_bekleyen[0] >= ARKA_IKINCI_BEKLEME_SN:
+                vehicle_events.append(tespit_olustur(
+                    arka_bekleyen[0], "yolcular", "arka_koltuk_1", arka_bekleyen[1]))
+                arka_bekleyen = None
+                arka_koltuk_2_dolu = True
+                arka_koltuk_pencerede_yazildi = True
+
             if en_buyuk is not None and belirsizlik_pencere_gorunum and not arka_koltuk_pencerede_yazildi and not (arka_koltuk_1_dolu and arka_koltuk_2_dolu):
                 kax1, kay1, kax2, kay2 = en_buyuk
                 kpad_x, kpad_y = int((kax2-kax1)*0.05), int((kay2-kay1)*0.05)
@@ -1676,10 +1691,14 @@ def run_inference(video_path):
                 arac_roi_koltuk = frame[kry1:kry2, krx1:krx2]
                 if arac_roi_koltuk.size > 0:
                     arac_roi_koltuk = _arac_roi_parlaklik_duzelt(arac_roi_koltuk)
-                    krx_orta = krx1 + (krx2 - krx1) // 2
-                    sag_roi = arac_roi_koltuk[:, krx_orta-krx1:]
-                    if sag_roi.size > 0:
-                        ay_sonuc = yolcu_model_koltuk(sag_roi, conf=YOLCU_KISI_ESIK, verbose=False)[0]
+                    # 07.08: arama TUM ROI genisligine acildi (eskiden yalniz sag
+                    # yari) -- hakem kurali ikinci yolcuyu bulmayi gerektiriyor ve
+                    # ikinci yolcu arka koltugun SOL tarafinda oturuyor (faz2 GT'nin
+                    # 12 arka_koltuk_2 ani sag-yari aramasiyla hic yakalanamadi).
+                    # Sofor IoU-elemesi asagida ayni; on-yolcu karismasina karsi
+                    # ikinci adaya cift-tutarlilik filtresi uygulanir.
+                    if arac_roi_koltuk.size > 0:
+                        ay_sonuc = yolcu_model_koltuk(arac_roi_koltuk, conf=YOLCU_KISI_ESIK, verbose=False)[0]
 
                         def _sofor_ile_cakisiyor_mu(kutu):
                             if sofor_kutusu is None:
@@ -1696,10 +1715,20 @@ def run_inference(video_path):
                         adaylar = []
                         for k in ay_sonuc.boxes:
                             kx1, ky1, kx2, ky2 = k.xyxy[0].tolist()
-                            tam_kutu = (kx1+krx_orta, ky1+kry1, kx2+krx_orta, ky2+kry1)
+                            tam_kutu = (kx1+krx1, ky1+kry1, kx2+krx1, ky2+kry1)
                             if not _sofor_ile_cakisiyor_mu(tam_kutu):
                                 adaylar.append((float(k.conf), tam_kutu))
                         adaylar.sort(key=lambda a: a[0], reverse=True)
+                        # ILK aday sag-yarida olmali (eski disiplin: 12TP/0FP) --
+                        # tam-genislik ilk-aday secimi 07.08 olcumunde 2 FP getirdi.
+                        # Ikinci aday icin tum genislik serbest (hakem kurali).
+                        roi_orta_x = krx1 + (krx2 - krx1) / 2
+                        sagdakiler = [a for a in adaylar if (a[1][0]+a[1][2])/2 > roi_orta_x]
+                        if sagdakiler:
+                            birinci = sagdakiler[0]
+                            adaylar = [birinci] + [a for a in adaylar if a is not birinci]
+                        else:
+                            adaylar = []
                         # AYNI KISIYE cift kutu elemesi: dusuk cozunurluk/parlak
                         # goruntude tek yolcuya iki kutu cikabiliyor (v14 olcumu:
                         # 240p'de 2, aydinlikta 5 sahte arka_koltuk_1). En yuksek
@@ -1710,30 +1739,38 @@ def run_inference(video_path):
                             ]
 
                         if adaylar:
-                            # Arama ROI'nin SAG yarisinda yapiliyor: aracin arkasindan
-                            # bakista sag yari = aracin SAG (yolcu) tarafi = arka_koltuk_2.
-                            # faz2 GT ile dogrulandi (12 arka_koltuk_2'ye karsi 1
-                            # arka_koltuk_1): ilk gorunen aday sag koltuktur.
-                            # arka_koltuk_1 ise ancak AYNI karede IKINCI bir es-zamanli
-                            # kisi de gorunuyorsa yazilir -- "koltuk_2 dolu diye tek
-                            # adayi koltuk_1'e terfi ettirme" v12'de 3 yuksek-guvenli FP
-                            # uretti (ayni yolcu yeni pencerede yeniden bulununca).
-                            if not arka_koltuk_2_dolu:
+                            # HAKEM KURALI (07.08): ilk yolcu bulununca hemen yazma,
+                            # ARKA_IKINCI_BEKLEME_SN boyunca ikinci yolcuyu ara.
+                            #   - ayni karede >=2 ayrik yolcu -> arka_koltuk_2, SU AN
+                            #     (ikincinin gorulme saniyesi) ile yazilir;
+                            #   - tek yolcu -> beklemeye alinir; sure dolarsa yukarida
+                            #     arka_koltuk_1 ILK gorulme zamaniyla yazilir.
+                            # CIFT-TUTARLILIK: ikinci aday, ilkiyle ayni "sira"da
+                            # oturmali -- dikey merkez farki ROI yuksekliginin
+                            # %18'ini asmamali, kutu alani 0.4x-2.5x araliginda
+                            # olmali (on-yolcu/kabin yansimasi ikinci yolcu sanilmasin).
+                            ikinci = None
+                            if len(adaylar) >= 2:
+                                a0 = adaylar[0][1]
+                                cy0 = (a0[1] + a0[3]) / 2
+                                alan0 = (a0[2]-a0[0]) * (a0[3]-a0[1])
+                                roi_h = max(1.0, kry2 - kry1)
+                                for aday_c, aday_k in adaylar[1:]:
+                                    cyk = (aday_k[1] + aday_k[3]) / 2
+                                    alank = (aday_k[2]-aday_k[0]) * (aday_k[3]-aday_k[1])
+                                    if (abs(cyk - cy0) <= roi_h * 0.18
+                                            and 0.4 <= alank / max(alan0, 1.0) <= 2.5):
+                                        ikinci = (aday_c, aday_k)
+                                        break
+                            if ikinci is not None:
+                                vehicle_events.append(tespit_olustur(
+                                    sn, "yolcular", "arka_koltuk_2", ikinci[0]))
+                                arka_bekleyen = None
                                 arka_koltuk_2_dolu = True
-                                # 07.08 hakem bilgisi: GT semasinda arka_koltuk_2 YOK --
-                                # arka koltuk tespitleri tek etiketle (arka_koltuk_1) yazilir.
-                                vehicle_events.append(tespit_olustur(sn, "yolcular", "arka_koltuk_1", adaylar[0][0]))
                                 arka_koltuk_pencerede_yazildi = True
-                                if len(adaylar) >= 2 and not arka_koltuk_1_dolu:
-                                    arka_koltuk_1_dolu = True
-                                    vehicle_events.append(tespit_olustur(sn, "yolcular", "arka_koltuk_1", adaylar[1][0]))
-                            elif len(adaylar) >= 2 and not arka_koltuk_1_dolu:
-                                arka_koltuk_1_dolu = True
-                                vehicle_events.append(tespit_olustur(sn, "yolcular", "arka_koltuk_1", adaylar[1][0]))
-                                arka_koltuk_pencerede_yazildi = True
-                            # tek aday + koltuk_2 dolu: ayni kisi yeniden gorunmus --
-                            # yeni olay yazilmaz (6 sn'lik sifirlama zaten periyodik
-                            # yeniden-raporlamayi sagliyor)
+                            elif arka_bekleyen is None:
+                                arka_bekleyen = (sn, adaylar[0][0])
+                            # tek aday + bekleme zaten aktif: ikinciyi aramaya devam
 
             if bolge is None:
                 for ad in modeller:
