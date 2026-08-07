@@ -286,6 +286,10 @@ KEMER2_VAR_ESIK = float(os.environ.get("KEMER2_VAR_ESIK", "0.65"))
 KEMER2_YOK_ESIK = float(os.environ.get("KEMER2_YOK_ESIK", "0.55"))
 KEMER2_YOK_SN = float(os.environ.get("KEMER2_YOK_SN", "1.0"))
 KEMER2_YOK_BOSLUK = 0.6   # yok kosusunda izin verilen karar boslugu (sn)
+# 07.08 takim karari: YOKLUK SAATI KALDIRILDI -- "var kaniti gelmiyor" tek
+# basina ihlal SAYILMAZ; ihlal yalniz modelin gercek "yok" tespitiyle yazilir
+# (surekli-yok kanali). Arastirma icin KEMER_YOKLUK=1 ile geri acilabilir.
+KEMER_YOKLUK_AKTIF = os.environ.get("KEMER_YOKLUK", "0") == "1"
 
 TASK_YOLU = os.path.join(WEIGHTS_DIR, "face_landmarker.task")
 secenek = mp_vision.FaceLandmarkerOptions(
@@ -1621,7 +1625,7 @@ def run_inference(video_path):
             # gercek "var" kaniti (yukarida) saati sifirlar. Arac KEMER_ARAC_KOPUKLUK_SN
             # boyunca hic gorunmediyse saat yeniden baslatilir -- bos yol/kadraj disi
             # bolumlerde sahte ihlal uretilmez (faz2'de arac hep gorunur, davranis ayni).
-            if en_buyuk is not None and kemer_kuruldu:
+            if KEMER_YOKLUK_AKTIF and en_buyuk is not None and kemer_kuruldu:
                 if kemer_son_arac_sn is not None and (sn - kemer_son_arac_sn) > KEMER_ARAC_KOPUKLUK_SN:
                     kemer_yokluk_bas = None
                     kemer_yokluk_yazilan_son = None
@@ -1703,7 +1707,9 @@ def run_inference(video_path):
                             # uretti (ayni yolcu yeni pencerede yeniden bulununca).
                             if not arka_koltuk_2_dolu:
                                 arka_koltuk_2_dolu = True
-                                vehicle_events.append(tespit_olustur(sn, "yolcular", "arka_koltuk_2", adaylar[0][0]))
+                                # 07.08 hakem bilgisi: GT semasinda arka_koltuk_2 YOK --
+                                # arka koltuk tespitleri tek etiketle (arka_koltuk_1) yazilir.
+                                vehicle_events.append(tespit_olustur(sn, "yolcular", "arka_koltuk_1", adaylar[0][0]))
                                 arka_koltuk_pencerede_yazildi = True
                                 if len(adaylar) >= 2 and not arka_koltuk_1_dolu:
                                     arka_koltuk_1_dolu = True
