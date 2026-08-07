@@ -27,6 +27,11 @@ class FlowState:
         self.token_expires_at: float | None = None  # time.monotonic() bazlı
         self.qod_status: str | None = None
         self.qod_session_id: str | None = None
+        # Turkcell'in GERÇEKTEN verdiği süre (saniye) ve ne zaman verildiği
+        # (time.monotonic() bazlı) — qod_remaining_seconds()'ın hesapladığı
+        # kalan süre için. 7 Ağustos'ta eklendi (bkz. o metodun dokümantasyonu).
+        self.qod_granted_at: float | None = None
+        self.qod_duration: int | None = None
         self.error_code: str | None = None
         self.error_detail: str | None = None
         self.created_at = time.monotonic()
@@ -46,6 +51,29 @@ class FlowState:
             and self.token_expires_at is not None
             and time.monotonic() < self.token_expires_at
         )
+
+    def qod_remaining_seconds(self) -> float | None:
+        """Şu an takip ettiğimiz QoD oturumunun kalan süresi (sn), yoksa None.
+
+        7 Ağustos'ta canlı SIM'de kanıtlandı: Turkcell (a) DELETE ile erken
+        kapatmayı desteklemiyor (403) VE (b) aynı cihaz için üst üste
+        `/start` çağrılarını 409 ile REDDETMİYOR — her çağrıda bağımsız,
+        YENİ bir 360 sn'lik oturum veriyor. Bu ikisi birleşince, art arda
+        `/start` çağrıları (çift dokunma, mobildeki RetryInterceptor'ın
+        bağlantı hatasında otomatik yeniden denemesi) Turkcell'de üst üste
+        binen bağımsız oturumlar açtırıp QoD'nin saatlerce "açık" kalmasına
+        yol açabiliyordu. Çözüm: zaten süresi dolmamış bir oturum takip
+        ediyorsak `/start` Turkcell'e HİÇ yeni istek göndermesin — bkz.
+        routes_qod.py.
+        """
+        if (
+            self.qod_session_id is None
+            or self.qod_granted_at is None
+            or self.qod_duration is None
+        ):
+            return None
+        kalan = self.qod_duration - (time.monotonic() - self.qod_granted_at)
+        return kalan if kalan > 0 else None
 
 
 class FlowRegistry:

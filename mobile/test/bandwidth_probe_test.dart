@@ -102,6 +102,25 @@ void main() {
     expect(adapter.istenenler.last, contains('segment-0.ts'));
   });
 
+  test('preferHighest true iken EN YUKSEK varyantin segmentini indirir', () async {
+    // 7 Ağustos: QoD başarılıyken bile 240p'yi (72 KB) ölçmeye devam etmek,
+    // sabit bağlantı gecikmesinin hâkim olduğu (0.5→0.6 Mbps gibi) yanıltıcı
+    // bir "sonra" sonucu üretiyordu — gerçek 8 Mbit'lik hızı hiç yansıtmıyordu.
+    final adapter = _SahteAdapter();
+    final dio = Dio()..httpClientAdapter = adapter;
+    final servis = BandwidthProbeService(dio: dio);
+
+    final ornek = await servis.probe(_masterUrl, preferHighest: true);
+
+    expect(ornek, isNotNull);
+    expect(
+      adapter.istenenler.any((u) => u.contains('1080p')),
+      isTrue,
+      reason: 'QoD sonrası gerçek hızı görmek için en yüksek varyant inilmeli',
+    );
+    expect(adapter.istenenler.any((u) => u.contains('240p')), isFalse);
+  });
+
   test('ag hatasinda null doner, istisna sizdirmaz', () async {
     // Ölçüm kritik değil: başarısızsa UI o örneği göstermez, akış devam eder.
     final dio = Dio()

@@ -57,4 +57,30 @@ class AppConfig {
   /// süre tanınacak" — backend'deki `job_timeout_seconds` ile birebir aynı
   /// değer. AI Sonucu ekranındaki sayaç bu tavana göre renk değiştirir.
   static const Duration aiProcessingTimeout = Duration(minutes: 10);
+
+  // ── SADECE TEST İÇİN — yarışma hızını simüle etme ────────────────────────
+  //
+  // Test SIM'imiz çok hızlı (QoD açık/kapalı fark etmiyor), ama yarışma
+  // SIM'i QoD'siz 256 kbit/s, QoD'li 8 Mbit/s ile sınırlı olacak. ffmpeg'in
+  // gerçek video indirmesi Dart'tan tamamen görünmez/erişilemez olduğu için
+  // (native bir kütüphane, kendi ham soket HTTP fetch'ini yapıyor) bu iki
+  // bayrak yalnızca YAKLAŞIK bir gerçekçilik sağlar — kesin kbps kontrolü
+  // değil. VARSAYILAN HER ZAMAN KAPALI: bir --dart-define VERİLMEDEN asla
+  // etkinleşmezler, yarışma build'inde bu satırlar hiç yazılmayacak.
+
+  /// true ise ffmpeg kaydı stream'in KENDİ bit hızında okur (`-re` bayrağı,
+  /// bkz. `VideoRecordingService`) — max hızda değil. QoD'siz senaryoyu
+  /// (240p ~289 kbps, gerçek 256 kbit'e çok yakın) gerçekçi test etmeyi
+  /// sağlar. 1080p/8 Mbit senaryosunu TAM taklit etmez (1080p'nin kendi biti
+  /// ~9.15 Mbps, hedeften biraz yüksek) ama yine de gerçekçi bir yavaşlama
+  /// verir. YARIŞMA BUILD'İNDE ASLA VERİLMEMELİ — gereksiz yavaşlatır.
+  static const bool testRealtimePace = bool.fromEnvironment('TEST_REALTIME_PACE');
+
+  /// >0 ise backend'e giden yüklemeler bu hıza (kbit/s) yapay olarak
+  /// kısıtlanır (bkz. `TestThrottleInterceptor`). 0 = kapalı. Amaç ilerleme
+  /// çubuğunu güzelleştirmek değil, "yavaş bir yüklemede zaman aşımı/AI-poll
+  /// dayanıklılığı/QoD süresi dolması gibi senaryolar gerçekten çalışıyor
+  /// mu" sorusuna cevap vermek. YARIŞMA BUILD'İNDE ASLA VERİLMEMELİ.
+  static const int testUploadThrottleKbps =
+      int.fromEnvironment('TEST_UPLOAD_KBPS', defaultValue: 0);
 }

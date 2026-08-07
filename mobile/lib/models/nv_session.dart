@@ -49,6 +49,18 @@ class NvSession {
 
   bool get isVerified => status == NvStatus.verified;
 
+  /// "+905360303556" -> "+90 536 030 35 56" — okunaklı gösterim. Home'daki
+  /// üst çubuk (`HomeScreen`) ve oturum kartı (`SessionCard`) ortak kullanır.
+  /// Beklenmeyen bir biçimde gelirse (yanlış uzunluk, farklı ülke kodu)
+  /// OLDUĞU GİBİ döner — asla veri kaybetmez, yalnızca boşluk ekler.
+  String get formattedPhoneNumber {
+    if (!phoneNumber.startsWith('+90')) return phoneNumber;
+    final haneler = phoneNumber.substring(3);
+    if (haneler.length != 10 || int.tryParse(haneler) == null) return phoneNumber;
+    return '+90 ${haneler.substring(0, 3)} ${haneler.substring(3, 6)} '
+        '${haneler.substring(6, 8)} ${haneler.substring(8, 10)}';
+  }
+
   /// mobile-integration.md 2.3: "sahada en olası hata" — cihaz WiFi'deyken NV
   /// kesin başarısız olur; UI'da özel mesajı vardır.
   bool get isWifiError =>

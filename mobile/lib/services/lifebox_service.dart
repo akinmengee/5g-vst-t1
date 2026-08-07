@@ -77,39 +77,44 @@ class LifeboxService {
     );
   }
 
-  /// AI sonucunu ve parmak izini **TEK paylaşım işleminde** gönderir.
+  /// AI sonucunu ve parmak izlerini **TEK paylaşım işleminde** gönderir.
   ///
   /// Neden tek işlem: Lifebox'ın resmî API/SDK'sı paylaşılmadığı için hedef
-  /// klasörü seçemiyoruz — ikisini aynı anda göndermek, aynı yere düşmeleri
+  /// klasörü seçemiyoruz — üçünü aynı anda göndermek, aynı yere düşmeleri
   /// için elimizdeki en iyi güvence. Ayrıca canlı demoda tek dokunuş yeterli
-  /// oluyor, iki ayrı adımı karıştırma riski kalmıyor.
+  /// oluyor, ayrı adımları karıştırma riski kalmıyor.
   ///
-  /// [jsonIcerik] ile [hash] birbirine bağlıdır: hash tam olarak bu metnin
-  /// MD5'i olmalı (bkz. `ResultsFingerprint.of`), yoksa hakem karşılaştırması
+  /// [jsonIcerik], [md5Hash] ve [sha256Hash] birbirine bağlıdır: her ikisi de
+  /// tam olarak bu metnin hash'i olmalı (bkz. `ResultsFingerprint.of` ve
+  /// session_controller'daki sha256 hesaplaması), yoksa hakem karşılaştırması
   /// tutmaz.
   Future<void> shareResultsWithHash({
     required String jsonFileName,
     required String jsonIcerik,
-    required String hash,
+    required String md5Hash,
+    required String sha256Hash,
   }) async {
     final dir = await getTemporaryDirectory();
 
     final jsonFile = File('${dir.path}/$jsonFileName');
     await jsonFile.writeAsString(jsonIcerik);
 
-    // Yalnızca hash — hakem `md5sum results.json` çıktısıyla birebir
-    // karşılaştırabilsin diye başka hiçbir metin yok.
-    final hashFileName = '$jsonFileName.md5.txt';
-    final hashFile = File('${dir.path}/$hashFileName');
-    await hashFile.writeAsString(hash);
+    // Yalnızca hash — hakem `md5sum`/`sha256sum results.json` çıktısıyla
+    // birebir karşılaştırabilsin diye başka hiçbir metin yok.
+    final md5File = File('${dir.path}/$jsonFileName.md5.txt');
+    await md5File.writeAsString(md5Hash);
+
+    final sha256File = File('${dir.path}/$jsonFileName.sha256.txt');
+    await sha256File.writeAsString(sha256Hash);
 
     await SharePlus.instance.share(
       ShareParams(
         files: [
           XFile(jsonFile.path, mimeType: 'application/json'),
-          XFile(hashFile.path, mimeType: 'text/plain'),
+          XFile(md5File.path, mimeType: 'text/plain'),
+          XFile(sha256File.path, mimeType: 'text/plain'),
         ],
-        text: 'VST-T1 · TEKNOFEST 5G — AI sonucu + MD5 parmak izi',
+        text: 'VST-T1 · TEKNOFEST 5G — AI sonucu + MD5 + SHA256 parmak izi',
       ),
     );
   }

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-const _stepLabels = ['Doğrula', 'Oturum', 'QoD', 'Kayıt', 'Yükle', 'AI', 'İz'];
+const _stepLabels = ['Doğrulama', 'Oturum', 'QoD', 'Kayıt', 'Yükle', 'AI Analizi', 'Trace'];
 const _dotDiameter = 26.0;
 
 /// Open Gateway Demo UX Kılavuzu'ndaki "01 Doğrula → ... → 07 Trace" akışının
@@ -155,7 +155,12 @@ class _StepDot extends StatelessWidget {
             fontFamily: 'Inter',
             fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
           ),
-          child: Text(label, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     );

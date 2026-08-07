@@ -50,12 +50,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              controller.nvSession.phoneNumber,
-              style: const TextStyle(
-                fontSize: 15.5,
-                fontWeight: FontWeight.w700,
-                fontFeatures: [FontFeature.tabularFigures()],
+            // AppBar dar olabiliyor (leading ikon + logout/refresh butonları
+            // yer kaplıyor) — gruplu yazımın son hanesi sarmalanmasın diye
+            // aynı FittedBox güvencesi (bkz. SessionCard).
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                controller.nvSession.formattedPhoneNumber,
+                maxLines: 1,
+                style: const TextStyle(
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
               ),
             ),
             Text(
@@ -101,7 +110,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           tabs: const [
             Tab(text: 'Akış'),
             Tab(text: 'AI Sonucu'),
-            Tab(text: 'İz'),
+            Tab(text: 'Trace'),
           ],
         ),
       ),

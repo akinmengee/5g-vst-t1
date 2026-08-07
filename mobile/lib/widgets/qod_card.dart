@@ -6,7 +6,8 @@ import '../theme/app_theme.dart';
 import 'accent_card.dart';
 
 /// Open Gateway Demo UX Kılavuzu → "03 Quality-on-Demand'i aç" / HOME SEKMESİ
-/// · "QOD SESSİON" KARTI. mobile-integration.md 2.4: parametre gönderilmez,
+/// · "QOD OTURUMU" KARTI (ekranda "QoD Session" değil "QoD Oturumu" yazar —
+/// uygulama Türkçe). mobile-integration.md 2.4: parametre gönderilmez,
 /// profil/süre backend'de sabittir (teknofest2026); `success:false` akışı
 /// kilitlemez, puan kaybı yoktur.
 class QodCard extends StatelessWidget {
@@ -47,7 +48,7 @@ class QodCard extends StatelessWidget {
                 children: const [
                   StepBadge('03'),
                   SizedBox(width: 8),
-                  Text('QoD Session',
+                  Text('QoD Oturumu',
                       style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 ],
               ),
@@ -59,7 +60,8 @@ class QodCard extends StatelessWidget {
             children: [
               const Icon(Icons.tune, size: 13, color: AppTheme.inkSoft),
               const SizedBox(width: 5),
-              const Text('profil: ', style: TextStyle(color: AppTheme.inkSoft, fontSize: 12)),
+              const Text('Kalite profili: ',
+                  style: TextStyle(color: AppTheme.inkSoft, fontSize: 12)),
               const Text(
                 'teknofest2026',
                 style: TextStyle(

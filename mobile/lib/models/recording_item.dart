@@ -12,6 +12,15 @@ class RecordingItem {
   final Duration duration;
   int? sizeBytes;
 
+  /// true: ffprobe ile ölçülen gerçek süre, HLS playlist'inin beklenen
+  /// TOPLAM süresinden belirgin şekilde kısa çıktı — muhtemelen ağ/QoD
+  /// kesintisiyle kayıt erken bitti (bkz. `VideoRecordingService._dogrulaSure`).
+  /// Dosya yine de listeye eklenir (tamamen gizlemek daha kötü) ama bu
+  /// bayrak UI'da net bir uyarı ve upload öncesi onay diyaloğu tetikler.
+  bool supheliSure = false;
+  double? beklenenSaniye;
+  double? gercekSaniye;
+
   UploadState uploadState = UploadState.none;
   String? uploadError;
 

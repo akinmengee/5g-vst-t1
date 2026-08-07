@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import '../config/app_config.dart';
+import 'test_throttle_interceptor.dart';
 import 'trace_log.dart';
 
 /// Şartname: "Mobil uygulama ve backend arasında, ağ koşullarından
@@ -72,5 +73,10 @@ class ApiClient {
     // istek/yanıt görünsün (retry içteki `dio.fetch` ayrı bir Dio ile gider).
     dio.interceptors.add(TraceInterceptor(traceLog));
     dio.interceptors.add(RetryInterceptor());
+    // SADECE TEST İÇİN: bir --dart-define=TEST_UPLOAD_KBPS=N verilmediği
+    // sürece bu interceptor hiç EKLENMEZ — yarışma build'inde yok.
+    if (AppConfig.testUploadThrottleKbps > 0) {
+      dio.interceptors.add(TestThrottleInterceptor(AppConfig.testUploadThrottleKbps));
+    }
   }
 }

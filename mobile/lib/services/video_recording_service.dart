@@ -2,20 +2,35 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
 
 import '../config/app_config.dart';
 
-enum RecordingStatus { idle, recording, completed, failed, cancelled }
+/// [incomplete]: ffmpeg SUCCESS döndü (dosya var, bozuk değil) ama gerçek
+/// süresi beklenenden belirgin şekilde kısa — muhtemelen ağ/QoD kesintisiyle
+/// akış erken bitti. Bkz. `VideoRecordingService._dogrulaSure`.
+enum RecordingStatus { idle, recording, completed, incomplete, failed, cancelled }
 
 class RecordingResult {
   final RecordingStatus status;
   final String? filePath;
   final String? errorMessage;
 
-  const RecordingResult({required this.status, this.filePath, this.errorMessage});
+  /// Yalnızca [RecordingStatus.incomplete]'de dolu — playlist toplamından
+  /// hesaplanan beklenen süre ile ffprobe'un ölçtüğü gerçek süre (saniye).
+  final double? expectedSeconds;
+  final double? actualSeconds;
+
+  const RecordingResult({
+    required this.status,
+    this.filePath,
+    this.errorMessage,
+    this.expectedSeconds,
+    this.actualSeconds,
+  });
 }
 
 /// Şartname: "streaming sunucusuna bağlanıp maksimum 5 dakika içerisinde
@@ -85,6 +100,13 @@ class VideoRecordingService {
   Future<RecordingResult> startRecording({
     required String hlsUrl,
     void Function(Duration elapsed)? onProgress,
+    /// HLS medya playlist'inin `#EXTINF` toplamından hesaplanan, akışın
+    /// GERÇEKTE ne kadar sürmesi gerektiği (saniye) — bkz.
+    /// `HlsVariantService.fetchExpectedDuration`. Verilmezse (null) süre
+    /// doğrulaması ATLANIR, sonuç her zaman `completed` sayılır (eski
+    /// davranış) — referans yoksa "eksik" demek yanlış tarafta hataya
+    /// düşmek olur.
+    double? expectedDurationSeconds,
   }) async {
     // ffmpeg_kit yalnızca mobil platformlarda var — web'de (tarayıcı
     // önizlemesi) kayıt açıkça hata verir, sessizce takılı kalmaz.
@@ -100,7 +122,15 @@ class VideoRecordingService {
     final maxSeconds = AppConfig.maxRecordingDuration.inSeconds;
     // -t ile sunucu tarafında da sert bir üst sınır var; buton ile manuel
     // durdurma da destekleniyor (cancelRecording).
-    final command = '-y -i "$hlsUrl" -t $maxSeconds -c copy "$outputPath"';
+    //
+    // SADECE TEST İÇİN: AppConfig.testRealtimePace true ise -re eklenir —
+    // ffmpeg VOD'u max hızda değil, stream'in KENDİ bit hızında okur. Bu,
+    // yarışma SIM'inin QoD'siz (256 kbit) durumunu gerçekçi test etmeyi
+    // sağlar (test SIM'imiz çok hızlı olduğu için bu fark normalde hiç
+    // görünmüyor). -re bir GİRDİ seçeneği olduğu için -i'DEN ÖNCE durmalı.
+    // Yarışma build'inde bu bayrak hiç verilmez, komut eskisiyle birebir aynı.
+    final gercekZamanli = AppConfig.testRealtimePace ? '-re ' : '';
+    final command = '-y $gercekZamanli-i "$hlsUrl" -t $maxSeconds -c copy "$outputPath"';
 
     final completer = Completer<RecordingResult>();
 
@@ -110,8 +140,11 @@ class VideoRecordingService {
         final returnCode = await session.getReturnCode();
         if (completer.isCompleted) return;
         if (ReturnCode.isSuccess(returnCode)) {
+          final eksikSonuc =
+              await _dogrulaSure(outputPath, expectedDurationSeconds);
           completer.complete(
-            RecordingResult(status: RecordingStatus.completed, filePath: outputPath),
+            eksikSonuc ??
+                RecordingResult(status: RecordingStatus.completed, filePath: outputPath),
           );
         } else if (ReturnCode.isCancel(returnCode)) {
           completer.complete(
@@ -135,6 +168,44 @@ class VideoRecordingService {
 
     _activeSessionId = session.getSessionId();
     return completer.future;
+  }
+
+  /// ffmpeg SUCCESS döndüğünde bile dosya EKSİK olabilir: VOD kaynağı gerçek
+  /// zamanlı okunmuyor (`-re` yok) — QoD ile bant genişliği arttıkça indirme
+  /// videonun kendi süresinden çok daha KISA sürede bitebiliyor (bu normal,
+  /// bilinçli tasarım). Ama HLS demuxer'ı bir ağ kesintisini (ör. QoD
+  /// oturumu bitip veri bağlantısı resetlenmesi) "akış bitti" sanıp ERKEN
+  /// sonlanırsa da SUCCESS döner — tek ayırt edici, dosyanın GERÇEK süresini
+  /// ffprobe ile ölçüp playlist'in TOPLAM süresiyle karşılaştırmak.
+  ///
+  /// null döner (doğrulama geçti/atlandı) ya da [RecordingStatus.incomplete]
+  /// taşıyan bir sonuç döner. ffprobe'un kendisi başarısız olursa da null
+  /// döner — doğrulayamamak "eksik" demek değildir, akışı engellemeyelim.
+  Future<RecordingResult?> _dogrulaSure(
+    String outputPath,
+    double? expectedDurationSeconds,
+  ) async {
+    if (expectedDurationSeconds == null) return null;
+    try {
+      final session = await FFprobeKit.getMediaInformation(outputPath);
+      final actual =
+          double.tryParse(session.getMediaInformation()?.getDuration() ?? '');
+      if (actual == null) return null;
+      // %90 tolerans: HLS segment yuvarlamaları / son segment kırpılması
+      // normal bir birkaç saniyelik fark yaratabilir, bu bir "eksik dosya"
+      // değildir.
+      if (actual < expectedDurationSeconds * 0.9) {
+        return RecordingResult(
+          status: RecordingStatus.incomplete,
+          filePath: outputPath,
+          expectedSeconds: expectedDurationSeconds,
+          actualSeconds: actual,
+        );
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Kullanıcı 5 dk dolmadan manuel "kaydı bitir" derse.

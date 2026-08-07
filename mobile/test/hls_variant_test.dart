@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:teknofest_mobile/services/hls_variant_service.dart';
 
@@ -119,4 +122,115 @@ only.m3u8
       );
     });
   });
+
+  // 7 Ağustos: "1:54'lük video 5 saniyede indi, bu normal mi" sorusu üstüne
+  // eklendi. ffmpeg VOD'u gerçek zamanlı okumadığı için hızlı inmesi normal,
+  // ama ağ/QoD kesintisiyle akışın ERKEN kesilip SUCCESS dönmesi de mümkün —
+  // bu fonksiyon, kayıt sonrası ffprobe ile ölçülen gerçek süreyle
+  // karşılaştırılacak "beklenen toplam süre" referansını üretiyor.
+  group('sumSegmentDurations', () {
+    test('birden fazla EXTINF toplanir', () {
+      const medya = '''
+#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:2.002,
+segment-0.ts
+#EXTINF:2.002,
+segment-1.ts
+#EXTINF:1.536,
+segment-2.ts
+#EXT-X-ENDLIST
+''';
+      expect(HlsVariantService.sumSegmentDurations(medya), closeTo(5.54, 0.001));
+    });
+
+    test('EXTINF yoksa null doner (dogrulama sessizce atlanir)', () {
+      const medya = '''
+#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-ENDLIST
+''';
+      expect(HlsVariantService.sumSegmentDurations(medya), isNull);
+    });
+
+    test('tam sayili EXTINF degerlerini de ayristirir', () {
+      const medya = '''
+#EXTM3U
+#EXTINF:10,
+segment-0.ts
+#EXTINF:10,
+segment-1.ts
+''';
+      expect(HlsVariantService.sumSegmentDurations(medya), closeTo(20.0, 0.001));
+    });
+
+    test('bos govdede null doner', () {
+      expect(HlsVariantService.sumSegmentDurations(''), isNull);
+    });
+  });
+
+  group('fetchExpectedDuration', () {
+    test('varyantin playlistini indirip toplam sureyi doner', () async {
+      final adapter = _SahteMedyaAdapter('''
+#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:2.0,
+segment-0.ts
+#EXTINF:1.5,
+segment-1.ts
+#EXT-X-ENDLIST
+''');
+      final dio = Dio()..httpClientAdapter = adapter;
+      final servis = HlsVariantService(dio: dio);
+      final varyant = HlsVariant(
+        bandwidthBps: 9155202,
+        url: 'https://ornek.local/hlssubplaylist-1080p.m3u8',
+        name: '1080p',
+      );
+
+      final sure = await servis.fetchExpectedDuration(varyant);
+
+      expect(sure, closeTo(3.5, 0.001));
+    });
+
+    test('ag hatasinda null doner, istisna sizdirmaz', () async {
+      final dio = Dio()..httpClientAdapter = _HataliMedyaAdapter();
+      final servis = HlsVariantService(dio: dio);
+      final varyant = HlsVariant(bandwidthBps: 1, url: 'https://ornek.local/x.m3u8');
+
+      expect(await servis.fetchExpectedDuration(varyant), isNull);
+    });
+  });
+}
+
+class _SahteMedyaAdapter implements HttpClientAdapter {
+  _SahteMedyaAdapter(this.govde);
+  final String govde;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async =>
+      ResponseBody.fromString(govde, 200);
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _HataliMedyaAdapter implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) =>
+      throw DioException(
+        requestOptions: options,
+        type: DioExceptionType.connectionError,
+      );
+
+  @override
+  void close({bool force = false}) {}
 }

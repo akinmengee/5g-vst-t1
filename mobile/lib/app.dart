@@ -13,7 +13,7 @@ class TeknofestApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => SessionController(),
       child: MaterialApp(
-        title: 'VST-T1 — TEKNOFEST 5G',
+        title: 'VST-T1 5G',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
         home: const NvScreen(),

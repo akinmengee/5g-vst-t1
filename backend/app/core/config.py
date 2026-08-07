@@ -19,15 +19,26 @@ class Settings(BaseSettings):
     # http://<VM_IP>:8080/api/auth/callback
     turkcell_redirect_uri: str = ""
 
-    # QoD oturum süresi (saniye). ÖLÇÜLDÜ (7 Ağustos, 3 bağımsız oturum):
-    # Turkcell tarafında QoD oturumu sona erdiği ANDA cihazın veri oturumu
-    # resetleniyor — public IP değişiyor ve açık TÜM TCP bağlantıları ölüyor.
-    # 360 sn ile bağlantı demo'nun tam ortasında (6. dakika) kopuyordu; oysa
-    # canlı demo kayıt (≤5 dk) + yükleme + AI (≤10 dk) ile 15+ dk sürebiliyor.
-    # 1200 sn, kopmayı demo bittikten SONRAYA öteliyor.
-    # Turkcell talep edilen süreyi kırpabilir (quality-on-demand.yaml:
-    # "Implementations can grant the requested session duration or set a
-    # different duration") — gerçekte verilen süre yanıttan okunup loglanıyor.
+    # QoD oturum süresi (saniye) — TALEP EDİLEN değer. ÖLÇÜLDÜ (7 Ağustos,
+    # 3 bağımsız oturum): Turkcell tarafında QoD oturumu sona erdiği ANDA
+    # cihazın veri oturumu resetleniyor — public IP değişiyor ve açık TÜM
+    # TCP bağlantıları ölüyor.
+    #
+    # KESİNLEŞTİ (7 Ağustos, tekrarlanan canlı testler): "teknofest2026"
+    # profili GERÇEK TAVANI HER ZAMAN 360 SN'YE KIRPIYOR — 1200 (ya da başka
+    # bir değer) talep etsek de fark etmiyor, Turkcell yanıtı hep 360
+    # döndürüyor. Yani gerçek bütçe kayıt+yükleme için 360 sn, 1200 değil;
+    # 1200 talep etmek zararsız (kırpılıyor) ama yanıltıcı bir güven vermesin.
+    # Gerçekte verilen süre yanıttan okunup loglanıyor/mobile taşınıyor.
+    #
+    # AYRICA KESİNLEŞTİ: Turkcell aynı cihaz için üst üste /start
+    # çağrılarını 409 ile REDDETMİYOR — her çağrıda bağımsız, yeni bir 360
+    # sn'lik oturum veriyor. routes_qod.py bu yüzden zaten süresi dolmamış
+    # bir oturum takip ediyorsa Turkcell'e YENİ istek göndermiyor (bkz.
+    # FlowState.qod_remaining_seconds) — aksi halde art arda /start çağrıları
+    # (çift dokunma, mobildeki RetryInterceptor) üst üste binen oturumlar
+    # açtırıp QoD'nin saatlerce açık kalmasına yol açabiliyordu.
+    #
     # Env'den ayarlanabilir: yarışma günü backend'i yeniden derlemeden değişir.
     qod_duration_seconds: int = 1200
 

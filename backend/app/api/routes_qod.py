@@ -10,6 +10,7 @@ QoD başarısızlığı puan kaybettirmez → hiçbir Turkcell hatası HTTP hata
 """
 
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException
 
@@ -34,21 +35,41 @@ async def start_qod(body: QodStartRequest) -> QodStartResponse:
         logger.warning("QoD: access_token yok/süresi dolmuş (flow=%s)", body.flow_id)
         return QodStartResponse(success=False)
 
+    # 7 Ağustos: zaten süresi dolmamış bir oturum takip ediyorsak Turkcell'e
+    # YENİ BİR İSTEK GÖNDERMİYORUZ. Kanıtlandı: Turkcell aynı cihaz için üst
+    # üste /start çağrılarını 409 ile reddetmiyor, her seferinde bağımsız
+    # YENİ bir 360 sn'lik oturum veriyor — art arda çağrılar (çift dokunma,
+    # mobildeki RetryInterceptor'ın otomatik yeniden denemesi) üst üste binen
+    # oturumlar açtırıp QoD'nin saatlerce açık kalmasına yol açabiliyordu
+    # (bkz. FlowState.qod_remaining_seconds dokümantasyonu).
+    kalan = flow.qod_remaining_seconds()
+    if kalan is not None:
+        return QodStartResponse(
+            success=True,
+            already_active=True,
+            session_id=flow.qod_session_id,
+            qos_status=flow.qod_status,
+            duration=int(kalan),
+        )
+
     gateway = get_gateway_client()
 
-    # Bu flow'da zaten bir oturum açtıysak ÖNCE onu kapatmayı dene: aynı cihaz
-    # için ikinci oturum 409 veriyor ve 1200 sn'lik süreyle bu 20 dakikalık bir
-    # kilit demek. En iyi çaba — Turkcell silmeyi desteklemiyorsa (spec'te yok)
+    # Bu flow'da süresi dolmuş/iz bırakmış bir oturum varsa ÖNCE kapatmayı
+    # dene: en iyi çaba — Turkcell silmeyi desteklemiyorsa (403, spec'te yok)
     # sessizce False döner, eski davranışa göre bir kayıp olmaz.
     if flow.qod_session_id:
         await gateway.stop_qod_session(flow.access_token, flow.qod_session_id)
         flow.qod_session_id = None
         flow.qod_status = None
+        flow.qod_granted_at = None
+        flow.qod_duration = None
 
     try:
         result = await gateway.start_qod_session(flow.access_token)
         flow.qod_status = result.qos_status
         flow.qod_session_id = result.session_id
+        flow.qod_granted_at = time.monotonic()
+        flow.qod_duration = result.duration
         return QodStartResponse(
             success=True,
             session_id=result.session_id,
@@ -92,4 +113,6 @@ async def stop_qod(body: QodStartRequest) -> QodStopResponse:
     # session_id'yi tekrar kullanmanın bir faydası yok.
     flow.qod_session_id = None
     flow.qod_status = None
+    flow.qod_granted_at = None
+    flow.qod_duration = None
     return QodStopResponse(stopped=stopped)

@@ -169,4 +169,42 @@ class HlsVariantService {
       return null;
     }
   }
+
+  /// Medya playlist gövdesindeki TÜM `#EXTINF:x.xx,` sürelerini toplar —
+  /// VOD akışın gerçek TOPLAM süresi (saniye). Hiç `#EXTINF` yoksa null.
+  ///
+  /// **Neden gerekli:** ffmpeg, VOD kaynağını gerçek zamanlı okumadan
+  /// (`-re` yok, bkz. `VideoRecordingService`) indirip remux ediyor — QoD ile
+  /// bant genişliği arttıkça indirme, videonun kendi süresinden çok daha KISA
+  /// sürede bitebiliyor (bu normal). Ama ffmpeg'in HLS demuxer'ı bir ağ
+  /// kesintisini "akış bitti" sanıp ERKEN sonlanırsa da SUCCESS döner ve
+  /// elimizde sessizce EKSİK bir dosya kalır — ikisini ayırt etmenin tek yolu,
+  /// kayıttan SONRA gerçek dosya süresini playlist'in TOPLAM süresiyle
+  /// karşılaştırmak (bkz. `VideoRecordingService._dogrulaSure`).
+  static double? sumSegmentDurations(String mediaPlaylistBody) {
+    final extinf = RegExp(r'#EXTINF:\s*([0-9]+(?:\.[0-9]+)?)');
+    double toplam = 0;
+    var bulundu = false;
+    for (final eslesme in extinf.allMatches(mediaPlaylistBody)) {
+      final deger = double.tryParse(eslesme.group(1)!);
+      if (deger != null) {
+        toplam += deger;
+        bulundu = true;
+      }
+    }
+    return bulundu ? toplam : null;
+  }
+
+  /// [variant]'ın medya playlist'ini indirip TOPLAM VOD süresini (saniye)
+  /// döner — kayıt öncesi "beklenen süre" referansı. Ağ/parse hatasında null
+  /// (doğrulama atlanır, kayıt yine de devam eder — referans yoksa
+  /// engellemek yanlış tarafta hataya düşmek olur).
+  Future<double?> fetchExpectedDuration(HlsVariant variant) async {
+    try {
+      final response = await _dio.get<String>(variant.url);
+      return sumSegmentDurations(response.data ?? '');
+    } catch (_) {
+      return null;
+    }
+  }
 }

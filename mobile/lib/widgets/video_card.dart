@@ -290,19 +290,27 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
         ],
       );
     }
-    return SizedBox(
-      width: double.infinity,
-      child: FilledButton.icon(
-        style: FilledButton.styleFrom(
-          backgroundColor: AppTheme.danger,
-          padding: const EdgeInsets.symmetric(vertical: 14),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.danger,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            onPressed: () => _kaydiBaslat(c),
+            icon: const Icon(Icons.fiber_manual_record, size: 18),
+            label: Text(c.recordings.isEmpty ? 'Kaydı Başlat' : 'Yeni Kayıt Başlat'),
+          ),
         ),
-        onPressed: () => _kaydiBaslat(c),
-        icon: const Icon(Icons.fiber_manual_record, size: 18),
-        label: Text(c.recordings.isEmpty
-            ? 'Kaydı Başlat (maks. 5 dk)'
-            : 'Yeni Kayıt Başlat (maks. 5 dk)'),
-      ),
+        const SizedBox(height: 4),
+        const Text(
+          'Maks. 5 dakika',
+          style: TextStyle(fontSize: 11, color: AppTheme.inkSoft),
+        ),
+      ],
     );
   }
 
@@ -338,6 +346,39 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
       if (devam != true) return;
     }
     await c.startRecording(c.streamUrl);
+  }
+
+  /// Süresi şüpheli (muhtemelen ağ/QoD kesintisiyle erken bitmiş) bir kaydı
+  /// Lifebox'a/backend'e göndermeden önce BİLİNÇLİ onay ister — sözleşme
+  /// diğer benzer uyarılarla (ör. QoD atlandı diyaloğu) aynı desen:
+  /// engellemiyoruz, ama kazara "eksik" bir video gönderilmesin.
+  Future<bool> _supheliOnayAl(RecordingItem item) async {
+    final beklenen = item.beklenenSaniye?.toStringAsFixed(0) ?? '?';
+    final gercek = item.gercekSaniye?.toStringAsFixed(0) ?? '?';
+    final devam = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Kayıt eksik olabilir'),
+        content: Text(
+          'Beklenen süre $beklenen sn, ölçülen gerçek süre $gercek sn — '
+          'muhtemelen kayıt sırasında bağlantı kesintiye uğradı (QoD oturumu '
+          'bitmiş olabilir).\n\nYine de bu kaydı göndermek istiyor musun? '
+          'Emin değilsen önce yeni bir kayıt almanı öneririz.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
+            child: const Text('Yine de gönder'),
+          ),
+        ],
+      ),
+    );
+    return devam ?? false;
   }
 
   // ---- Kayıt listesi -------------------------------------------------------
@@ -376,8 +417,13 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
             if (i > 0) const Divider(height: 1),
             _RecordingTile(
               item: item,
-              onUpload: () => c.uploadRecording(item),
-              onLifebox: () {
+              onUpload: () async {
+                if (item.supheliSure && !await _supheliOnayAl(item)) return;
+                c.uploadRecording(item);
+              },
+              onLifebox: () async {
+                if (item.supheliSure && !await _supheliOnayAl(item)) return;
+                if (!mounted) return;
                 if (kIsWeb) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                       content: Text('Paylaşım menüsü yalnızca telefonda açılır')));
@@ -435,7 +481,10 @@ class _VideoCardState extends State<VideoCard> with AutomaticKeepAliveClientMixi
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
                 ),
-                child: const Icon(Icons.live_tv, color: AppTheme.turkcellYellow, size: 28),
+                // Bilinçli seçim: hemen altındaki buton zaten Icons.play_arrow
+                // taşıyor — burada "TV" değil "sinyal/yayın" hissi veren bir
+                // ikon kullanıyoruz ki ikisi tekrar etmesin.
+                child: const Icon(Icons.sensors, color: AppTheme.turkcellYellow, size: 28),
               ),
               const SizedBox(height: 14),
               FilledButton.icon(
@@ -476,6 +525,14 @@ class _RecordingTile extends StatelessWidget {
   });
 
   String get _durumMetni {
+    // Şüpheli süre uyarısı her zaman ÖNCELİKLİ gösterilir — kullanıcı
+    // "Yüklendi" gibi normal bir durum metniyle bunun eksik bir kayıt
+    // olduğunu gözden kaçırmasın.
+    if (item.supheliSure) {
+      final gercek = item.gercekSaniye?.toStringAsFixed(0) ?? '?';
+      final beklenen = item.beklenenSaniye?.toStringAsFixed(0) ?? '?';
+      return '⚠ Eksik olabilir · $gercek/$beklenen sn';
+    }
     if (item.uploadState == UploadState.uploading) return 'Backend\'e yükleniyor…';
     if (item.uploadState == UploadState.failed) {
       return item.uploadError ?? 'Yükleme başarısız — tekrar dene';
@@ -496,6 +553,7 @@ class _RecordingTile extends StatelessWidget {
   }
 
   Color get _durumRengi {
+    if (item.supheliSure) return AppTheme.danger;
     if (item.uploadState == UploadState.failed) return AppTheme.danger;
     if (item.aiStatus == AiResultStatus.done) return AppTheme.success;
     if (item.uploadState == UploadState.uploading ||
@@ -517,10 +575,15 @@ class _RecordingTile extends StatelessWidget {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: AppTheme.navy.withValues(alpha: 0.06),
+                color: (item.supheliSure ? AppTheme.danger : AppTheme.navy)
+                    .withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.movie_outlined, color: AppTheme.navy, size: 18),
+              child: Icon(
+                item.supheliSure ? Icons.warning_amber_rounded : Icons.movie_outlined,
+                color: item.supheliSure ? AppTheme.danger : AppTheme.navy,
+                size: 18,
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(

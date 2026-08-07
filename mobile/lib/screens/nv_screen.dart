@@ -25,6 +25,22 @@ class _NvScreenState extends State<NvScreen> {
   bool _showLogs = false;
   bool _webViewOpen = false;
 
+  // NvScreen, MaterialApp'ın `home:`'u olduğu için navigator stack'inin en
+  // altında sabit duruyor — hiçbir zaman pop/dispose edilmiyor. Bu yüzden
+  // context.watch<SessionController>() nedeniyle SessionController'daki HER
+  // notifyListeners() (AI polling, kayıt sayacı, trace logu, bant genişliği
+  // ölçümü — yani sürekli) bu widget'ı da yeniden build ediyordu. Bayrak
+  // olmadan aşağıdaki postFrameCallback, `isVerified` true kaldığı SÜRECE
+  // (doğrulamadan sonraki tüm oturum boyunca) her rebuild'de yeniden
+  // `pushReplacement(HomeScreen())` çağırıyordu — kullanıcı AI Sonucu/İz
+  // sekmesindeyken ya da kayıt ortasındayken araya bir arka plan güncellemesi
+  // girerse, TAZE bir HomeScreen (TabController index 0'dan) en üste basılıp
+  // kullanıcı "ilk kısma" (Akış sekmesine) fırlatılıyordu. Bayrak, yönlendirmeyi
+  // doğrulama başına TAM BİR KEZ yapılmaya kilitliyor; logout ile nvSession
+  // sıfırlanıp yeniden doğrulanınca (`!session.isVerified` anında) bayrak da
+  // sıfırlanıyor, bir sonraki doğrulamada yönlendirme yine çalışır.
+  bool _navigatedHome = false;
+
   @override
   void initState() {
     super.initState();
@@ -67,9 +83,21 @@ class _NvScreenState extends State<NvScreen> {
         _openWebView(session.authorizeUrl!);
       }
       // Numara başarıyla doğrulandığında ekran yumuşak geçişle (auth-gate) ana
-      // uygulamaya açılır.
-      if (session.isVerified) {
-        Navigator.of(context).pushReplacement(fadeSlideRoute(const HomeScreen()));
+      // uygulamaya açılır — yalnızca BİR KEZ (bkz. _navigatedHome dokümantasyonu).
+      // Geçiş, arka plandaki "doğrulandı" ışık patlamasının (bkz. HeroHeader
+      // SignalMood.verified) görünür olması için ~550ms geciktiriliyor —
+      // patlama 650ms sürüyor, gecikme onun büyük kısmını ekranda tutuyor.
+      if (session.isVerified && !_navigatedHome) {
+        _navigatedHome = true;
+        // Navigator, gecikmeli callback'te BuildContext'i async gap sonrası
+        // kullanmamak için ÖNCEDEN (senkron) yakalanıyor.
+        final navigator = Navigator.of(context);
+        Future.delayed(const Duration(milliseconds: 550), () {
+          if (!mounted) return;
+          navigator.pushReplacement(fadeSlideRoute(const HomeScreen()));
+        });
+      } else if (!session.isVerified) {
+        _navigatedHome = false;
       }
     });
 
@@ -84,11 +112,19 @@ class _NvScreenState extends State<NvScreen> {
               Expanded(
                 child: Stack(
                   children: [
-                    const Positioned.fill(
+                    Positioned.fill(
                       child: HeroHeader(
-                        titleWhite: 'TEKNOFEST',
+                        titleWhite: 'VST-T1',
                         titleYellow: '5G',
                         subtitle: 'Sürücü davranış analizi',
+                        mood: switch (session.status) {
+                          NvStatus.authorizing => SignalMood.connecting,
+                          NvStatus.verified => SignalMood.verified,
+                          NvStatus.idle ||
+                          NvStatus.rejected ||
+                          NvStatus.failed =>
+                            SignalMood.idle,
+                        },
                       ),
                     ),
                     Align(

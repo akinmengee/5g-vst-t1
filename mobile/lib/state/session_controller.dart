@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/widgets.dart'
+    show AppLifecycleState, WidgetsBinding, WidgetsBindingObserver;
 
 import '../config/app_config.dart';
 import '../models/ai_result.dart';
@@ -31,7 +33,7 @@ import '../services/video_recording_service.dart';
 /// kayıt bağımsız olarak Lifebox'a paylaşılabilir ya da backend'e yüklenip
 /// kendi AI işine ([RecordingItem.jobId]) bağlanır. AI Sonucu sekmesi bu
 /// listeden beslenir; seçilen işin sonucu detay olarak açılır.
-class SessionController extends ChangeNotifier {
+class SessionController extends ChangeNotifier with WidgetsBindingObserver {
   final NvService _nvService = NvService();
   final QodService _qodService = QodService();
   final CellularNetworkService _cellular = CellularNetworkService();
@@ -63,6 +65,11 @@ class SessionController extends ChangeNotifier {
   /// kanıtlayabilir; null = henüz seçim yapılmadı ya da çözülemedi.
   HlsVariant? secilenVaryant;
 
+  /// [secilenVaryant]'ın playlist'inden hesaplanan TOPLAM VOD süresi (sn) —
+  /// kayıt sonrası eksik-dosya doğrulaması için referans (bkz. `_kayitKaynagi`
+  /// ve `VideoRecordingService._dogrulaSure`).
+  double? _beklenenSureSaniye;
+
   // ---- AI durumu ----------------------------------------------------------
   bool aiLoading = false;
 
@@ -92,13 +99,51 @@ class SessionController extends ChangeNotifier {
   SessionController({ResultsService? resultsService})
       : _resultsService = resultsService ?? ResultsService() {
     _loadExistingRecordings();
+    // Uygulama arka plana alınırsa/kapanırsa QoD'yi en iyi çabayla durdurmak
+    // için (bkz. _qodDurdurmayiDene dokümantasyonu).
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
     _disposed = true;
     _aiPollTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _qodDurdurmayiDene();
     super.dispose();
+  }
+
+  /// Uygulama arka plana alınınca ya da kapatılınca (best-effort — OS süreci
+  /// SERT kapatırsa bu callback de dahil hiçbir şey ÇALIŞMAZ, gerçek güvenlik
+  /// ağı sunucu tarafında: Turkcell'in kendi `qod_duration_seconds` zaman
+  /// aşımı + `/api/qod/start`'ın zaten süresi dolmamış bir oturum varken
+  /// Turkcell'e hiç yeni istek göndermeme mantığı).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      _qodDurdurmayiDene();
+    }
+  }
+
+  /// En iyi çaba QoD durdurma — TEK yerden (yükleme bitince, uygulama arka
+  /// plana alınınca/kapanınca, dispose()).
+  ///
+  /// `qodSession` BİLİNÇLİ OLARAK sıfırlanmıyor: QoD bir oturumda yalnızca
+  /// BİR KEZ açılabilir, "QoD Aç" butonu ilk başarılı açılıştan sonra
+  /// logout'a kadar kapalı kalır (7 Ağustos — kullanıcı isteği; önceki
+  /// sürümde upload bitince buton tekrar basılabilir hale geliyordu, bu
+  /// istenen davranış değildi).
+  ///
+  /// Bu çağrının kendisi de gerçek bir GARANTİ değildir: OS süreci SERT
+  /// kapatırsa (force-stop, bellek baskısı) hiç çalışmaz; Turkcell zaten bu
+  /// hesapta DELETE'i desteklemiyor (403, bkz. backend config.py) — yani
+  /// pratikte hiçbir zaman oturumu gerçekten erken bitirmiyor. Yine de
+  /// göndermeye devam ediyoruz: zararsız ve ileride Turkcell izin verirse
+  /// (ya da başka bir hesapta) karşılığı olur.
+  void _qodDurdurmayiDene() {
+    final flowId = nvSession.flowId;
+    if (flowId == null) return;
+    unawaited(_qodService.stop(flowId));
   }
 
   void _notify() {
@@ -231,6 +276,8 @@ class SessionController extends ChangeNotifier {
 
     // QoD'nin gerçek etkisini kanıtlamak için (şartname 4.1) aynı stream'den
     // önce/sonra gerçek bir indirme hızı örneği alınır — sahte sayı yok.
+    // "Önce" ölçümü her zaman en düşük varyantı indirir (256 kbit'te bile
+    // zaman aşımına düşmemesi için).
     bandwidthBefore = await _bandwidthProbe.probe(streamUrl);
     _notify();
 
@@ -239,7 +286,14 @@ class SessionController extends ChangeNotifier {
     _notify();
 
     await Future.delayed(const Duration(milliseconds: 800));
-    bandwidthAfter = await _bandwidthProbe.probe(streamUrl);
+    // "Sonra" ölçümü QoD başarılıysa en YÜKSEK varyantı indirir — küçük
+    // (240p) bir dosyada indirme süresi TCP/TLS el sıkışması gibi sabit
+    // gecikmelerin hâkimiyetinde kalıp gerçek 8 Mbit'lik hızı hiç
+    // yansıtmıyordu (ör. 0.5→0.6 Mbps). Aynı zamanda kaydın gerçekte
+    // kullanacağı varyantın (bkz. HlsVariantService.selectForQod) doğru
+    // bir provası oluyor.
+    bandwidthAfter =
+        await _bandwidthProbe.probe(streamUrl, preferHighest: qodSession.succeeded);
     bandwidthMeasuring = false;
     _notify();
   }
@@ -279,10 +333,13 @@ class SessionController extends ChangeNotifier {
     recordingElapsed = Duration.zero;
     recordingError = null;
     secilenVaryant = null;
+    _beklenenSureSaniye = null;
     _notify();
 
+    final kaynak = await _kayitKaynagi(hlsUrl);
     final result = await _recordingService.startRecording(
-      hlsUrl: await _kayitKaynagi(hlsUrl),
+      hlsUrl: kaynak,
+      expectedDurationSeconds: _beklenenSureSaniye,
       onProgress: (elapsed) {
         recordingElapsed = elapsed;
         _notify();
@@ -301,6 +358,29 @@ class SessionController extends ChangeNotifier {
       );
       await _fillSize(item);
       recordings.insert(0, item);
+    } else if (result.status == RecordingStatus.incomplete && result.filePath != null) {
+      // Dosya var ama GERÇEK süresi beklenenden kısa — muhtemelen ağ/QoD
+      // kesintisiyle kayıt erken bitti. Gizlemiyoruz (kullanıcı isterse
+      // inceleyip karar versin) ama net bir bayrakla işaretliyoruz; upload
+      // öncesi VideoCard bunun için ayrı bir onay diyaloğu gösteriyor.
+      final gercek = result.actualSeconds;
+      final item = RecordingItem(
+        path: result.filePath!,
+        name: _basename(result.filePath!),
+        createdAt: DateTime.now(),
+        duration: gercek != null
+            ? Duration(milliseconds: (gercek * 1000).round())
+            : recordingElapsed,
+      )
+        ..supheliSure = true
+        ..beklenenSaniye = result.expectedSeconds
+        ..gercekSaniye = result.actualSeconds;
+      await _fillSize(item);
+      recordings.insert(0, item);
+      recordingError = 'Kayıt eksik olabilir — beklenen '
+          '${result.expectedSeconds?.toStringAsFixed(0)} sn, elde edilen '
+          '${result.actualSeconds?.toStringAsFixed(0)} sn. Muhtemelen bağlantı '
+          'kesintiye uğradı, listedeki kayda dikkat: tekrar denemen önerilir.';
     } else if (result.status == RecordingStatus.failed) {
       recordingError = result.errorMessage ?? 'Kayıt başarısız';
     }
@@ -328,6 +408,11 @@ class SessionController extends ChangeNotifier {
     if (variant == null) return masterUrl;
 
     secilenVaryant = variant;
+    // Playlist'in TOPLAM süresi — kayıttan sonra ffprobe ile ölçülen gerçek
+    // süreyle karşılaştırılıp erken kesilen (eksik) kayıtları yakalamak için
+    // (bkz. VideoRecordingService._dogrulaSure). Hata/eksik veride null
+    // kalır — doğrulama o zaman sessizce atlanır, kayıt engellenmez.
+    _beklenenSureSaniye = await _hlsVariants.fetchExpectedDuration(variant);
     _notify();
     return variant.url;
   }
@@ -367,11 +452,47 @@ class SessionController extends ChangeNotifier {
       item.aiStatus = AiResultStatus.processing;
       item.processingStartedAt = DateTime.now();
       _scheduleAiPoll();
+      _qodYuklemeBittiyseDurdur();
     } else {
       item.uploadState = UploadState.failed;
       item.uploadError = upload.errorMessage;
     }
     _notify();
+  }
+
+  /// Yükleme bitince QoD'yi kaynağı erken bırakmak için durdurur — AMA
+  /// yalnızca BAŞKA hiçbir kayıt/yükleme sürmüyorsa. Turkcell'de QoD
+  /// oturumu durunca cihazın TÜM veri bağlantısı resetleniyor (bkz.
+  /// `qod_duration_seconds` yorumu, config.py) — başka bir yükleme o anda
+  /// sürüyorsa onu da koparırdı.
+  ///
+  /// AI işleme backend'de (GPU) telefonun bağlantısından bağımsız çalıştığı
+  /// için (ve AI polling bağlantı kesintilerine zaten dayanıklı) sonucu
+  /// beklemeye gerek yok — upload bitince durdurmak yeterli.
+  void _qodYuklemeBittiyseDurdur() {
+    final guvenli = qodDurdurmaGuvenli(
+      qodBasarili: qodSession.succeeded,
+      recording: recording,
+      digerYuklemeDurumlari: recordings.map((r) => r.uploadState).toList(),
+    );
+    if (!guvenli) return;
+    _qodDurdurmayiDene();
+  }
+
+  /// Bu anda QoD'yi durdurmak GÜVENLİ mi? Ayrı, saf (network'süz) bir
+  /// fonksiyon — `_qodYuklemeBittiyseDurdur`'daki en kritik/en riskli mantık
+  /// (yanlışlıkla BAŞKA bir yüklemeyi koparmamak) bağımsız test edilebilsin
+  /// diye. Yalnızca QoD zaten başarılıysa VE aktif kayıt/başka bir yükleme
+  /// sürmüyorsa güvenlidir.
+  @visibleForTesting
+  static bool qodDurdurmaGuvenli({
+    required bool qodBasarili,
+    required bool recording,
+    required List<UploadState> digerYuklemeDurumlari,
+  }) {
+    if (!qodBasarili) return false;
+    if (recording) return false;
+    return !digerYuklemeDurumlari.contains(UploadState.uploading);
   }
 
   Future<void> shareToLifebox(RecordingItem item) async {
@@ -497,24 +618,29 @@ class SessionController extends ChangeNotifier {
     return 'results.json paylaşım menüsünde — Dosyalar\'a veya Drive\'a kaydedebilirsin';
   }
 
-  /// results.json + MD5 parmak izini **tek paylaşımda** Lifebox'a gönderir.
+  /// results.json + MD5 + SHA256 parmak izlerini **tek paylaşımda**
+  /// Lifebox'a gönderir.
   ///
   /// Canlı demoda video'dan sonraki ikinci (ve son) Lifebox adımı: AI sonucu
-  /// geldiğinde hakem bu ikisini birlikte indirip hash'i doğrulayabilsin.
+  /// geldiğinde hakem üçünü birlikte indirip hash'i doğrulayabilsin.
   Future<String> shareResultsBundle(RecordingItem item) async {
     final jsonStr = item.resultsJsonMinified;
-    final hash = item.resultsMd5;
-    if (jsonStr == null || hash == null) return 'Henüz sonuç yok';
+    final md5Hash = item.resultsMd5;
+    final sha256Hash = item.resultsSha256;
+    if (jsonStr == null || md5Hash == null || sha256Hash == null) {
+      return 'Henüz sonuç yok';
+    }
     if (kIsWeb) {
-      await Clipboard.setData(ClipboardData(text: '$jsonStr\n$hash'));
-      return 'Sonuç ve parmak izi panoya kopyalandı (web önizleme)';
+      await Clipboard.setData(ClipboardData(text: '$jsonStr\n$md5Hash\n$sha256Hash'));
+      return 'Sonuç ve parmak izleri panoya kopyalandı (web önizleme)';
     }
     await _lifeboxService.shareResultsWithHash(
       jsonFileName: _sonucDosyaAdi(item),
       jsonIcerik: jsonStr,
-      hash: hash,
+      md5Hash: md5Hash,
+      sha256Hash: sha256Hash,
     );
-    return 'results.json + MD5 paylaşım menüsünde — Lifebox\'ı seçin';
+    return 'results.json + MD5 + SHA256 paylaşım menüsünde — Lifebox\'ı seçin';
   }
 
   /// ÜST ÇUBUK "çıkış" butonu. NvScreen, `nvSession.isVerified` true kaldığı
@@ -576,6 +702,7 @@ class SessionController extends ChangeNotifier {
     _streamUrl = temiz;
     // Yeni akışın varyantları farklı olabilir; önceki seçim artık geçersiz.
     secilenVaryant = null;
+    _beklenenSureSaniye = null;
     _notify();
   }
 

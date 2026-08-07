@@ -69,3 +69,55 @@ def test_bilinmeyen_flow_404_doner(monkeypatch, tmp_path):
     client = taze_ortam(monkeypatch, tmp_path, gateway=FakeOpenGatewayClient())
     resp = client.post("/api/qod/start", json={"flow_id": "yok-boyle-bir-sey"})
     assert resp.status_code == 404
+
+
+def test_aktif_oturumda_ikinci_start_turkcelle_gitmez(monkeypatch, tmp_path):
+    """7 Ağustos, canlı SIM'de kanıtlandı: Turkcell aynı cihaz için üst üste
+    /start çağrılarını 409 ile REDDETMİYOR — her seferinde bağımsız, yeni bir
+    360 sn'lik oturum veriyor. Art arda çağrılar (çift dokunma, mobildeki
+    RetryInterceptor'ın otomatik yeniden denemesi) bu yüzden üst üste binen
+    oturumlar açtırıp QoD'nin saatlerce açık kalmasına yol açabiliyordu.
+
+    Süresi dolmamış bir oturum takip ediyorsak ikinci /start Turkcell'e HİÇ
+    gitmemeli — aynı session_id + already_active=True dönmeli.
+    """
+    gateway = FakeOpenGatewayClient(qod_duration=360)
+    client = taze_ortam(monkeypatch, tmp_path, gateway=gateway)
+    fid = flow_yarat(client)
+    _token_ver(fid)
+
+    ilk = client.post("/api/qod/start", json={"flow_id": fid}).json()
+    assert ilk["success"] is True
+    assert ilk["already_active"] is False
+    assert ilk["sessionId"] == "fake-session"
+
+    ikinci = client.post("/api/qod/start", json={"flow_id": fid}).json()
+    assert ikinci["success"] is True
+    assert ikinci["already_active"] is True
+    assert ikinci["sessionId"] == "fake-session"
+    # Turkcell'e (start ya da stop) yalnızca İLK çağrıda gidilmiş olmalı.
+    assert gateway.start_qod_calls == 1
+    assert gateway.stop_qod_calls == 0
+
+
+def test_suresi_dolmus_oturumda_yeniden_baslatir(monkeypatch, tmp_path):
+    """Granted süre geçmişse (Turkcell'in kendi 360 sn'lik zaman aşımı
+    dolmuşsa) /start normal akışa döner: önce eski oturumu kapatmayı dener
+    (en iyi çaba), sonra Turkcell'den GERÇEKTEN yeni bir oturum ister."""
+    gateway = FakeOpenGatewayClient(qod_duration=360)
+    client = taze_ortam(monkeypatch, tmp_path, gateway=gateway)
+    fid = flow_yarat(client)
+    _token_ver(fid)
+
+    client.post("/api/qod/start", json={"flow_id": fid})
+    assert gateway.start_qod_calls == 1
+
+    # Oturumun süresinin çoktan dolduğunu simüle et.
+    flow = get_flow_registry().get(fid)
+    flow.qod_granted_at = time.monotonic() - 400
+
+    ikinci = client.post("/api/qod/start", json={"flow_id": fid}).json()
+    assert ikinci["success"] is True
+    assert ikinci["already_active"] is False
+    assert gateway.start_qod_calls == 2
+    assert gateway.stop_qod_calls == 1

@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../config/app_config.dart';
 import '../models/ai_result.dart';
@@ -25,6 +27,14 @@ class AiResultTab extends StatefulWidget {
   @override
   State<AiResultTab> createState() => AiResultTabState();
 }
+
+/// Tespitin saniye cinsinden zamanını (`Detection.zamanSaniye`) video
+/// oynatıcıdaki `seekTo` çağrısı için `Duration`'a çevirir. Ayrı bir
+/// top-level fonksiyon: hem `_ResultContentState._tespitiGoster` içinde
+/// kullanılıyor hem de yuvarlama davranışı (`ai_result_screen_test.dart`)
+/// bağımsız test edilebiliyor.
+Duration saniyeyeGoreKonum(double saniye) =>
+    Duration(milliseconds: (saniye * 1000).round());
 
 // ── Kategori görsel dili (tek yerden) ────────────────────────────────────────
 
@@ -284,15 +294,154 @@ class _JobDetail extends StatelessWidget {
   }
 }
 
-/// Sonuç içeriği: araç kartı + kanıt/zaman çizelgesi + gruplu tespitler +
-/// SHA256 + ham JSON.
-class _ResultContent extends StatelessWidget {
+/// Sonuç içeriği: araç kartı + kanıt/zaman çizelgesi + video önizleme +
+/// gruplu tespitler + SHA256 + ham JSON.
+class _ResultContent extends StatefulWidget {
   final RecordingItem item;
 
   const _ResultContent({required this.item});
 
   @override
+  State<_ResultContent> createState() => _ResultContentState();
+}
+
+class _ResultContentState extends State<_ResultContent> {
+  // ── Tespit-bağlantılı donuk video önizleme ────────────────────────────────
+  //
+  // Kayıt zaten cihazda yerel bir MP4 olarak duruyor (widget.item.path) — bir
+  // tespite dokununca ek indirme olmadan o saniyeye zıplayıp donuk bir kare
+  // gösteriyoruz; "Oynat"a basılırsa oradan devam ediyor.
+  VideoPlayerController? _videoController;
+  Detection? _secilenTespit;
+  bool _videoYukleniyor = false;
+  String? _videoHata;
+
+  // Video kartı sayfanın üst kısmında (başlık + araç kartından hemen sonra)
+  // olduğu için, bir tespite dokununca ekranı SAYFANIN EN BAŞINA kaydırmak
+  // — belirli bir widget'ı `Scrollable.ensureVisible` ile hedeflemekten daha
+  // basit ve güvenilir (7 Ağustos: ensureVisible kullanıcıya göre çalışmıyor
+  // gibi görünüyordu; "en yukarı kaydırsın yeterli" isteği üzerine sadeleşti).
+  final ScrollController _scrollController = ScrollController();
+
+  // 7 Ağustos bug'ı: ilk birkaç tespit çalışıp sonrakiler tepki vermiyordu.
+  // Kök sebep — "controller zaten var" dalında HİÇBİR eşzamanlılık koruması
+  // yoktu (yalnızca "controller henüz yok" dalı `_videoYukleniyor` ile
+  // korunuyordu). Kullanıcı listede hızlı dokunduğunda aynı controller'a
+  // ÜST ÜSTE `seekTo`/`pause` çağrıları gidiyordu — video_player'ın Android
+  // tarafı (ExoPlayer) örtüşen seek'lerde tıkanabiliyor, bu noktadan sonra
+  // `await`'ler hiç dönmüyor, TÜM sonraki dokunuşlar sessizce etkisiz
+  // kalıyordu. Çözüm: TEK bir meşguliyet bayrağı + "en son isteğe kilitlen"
+  // kuyruğu — asla iki native çağrı üst üste binmez, ama hiçbir dokunuş da
+  // kaybolmaz (meşgulken gelen istekler _beklemedekiTespit'e yazılır, iş
+  // bitince en son o uygulanır).
+  bool _videoMesgul = false;
+  Detection? _beklemedekiTespit;
+
+  @override
+  void initState() {
+    super.initState();
+    // Ekran ilk açıldığında en güçlü tespitin anı otomatik donuk gösterilir —
+    // kullanıcı hiç dokunmadan en önemli anı görür. Kaydırma YOK: kart zaten
+    // doğal konumunda, ekran yeni açıldı.
+    final top = _highestConfidence(widget.item.aiResult?.detections ?? const []);
+    if (top != null) {
+      unawaited(_tespitiGoster(top, scrollToVideo: false));
+    }
+  }
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _tespitiGoster(Detection d, {bool scrollToVideo = true}) async {
+    if (d.zamanSaniye == null) return;
+    if (!mounted) return;
+    setState(() => _secilenTespit = d);
+
+    if (scrollToVideo && _scrollController.hasClients) {
+      // Video decode'unu beklemeden HEMEN kaydır — soğuk ilk yüklemede
+      // kullanıcı decoder süresi kadar beklemeden video kartını görsün.
+      // Video kartı sayfanın üst kısmında olduğu için sayfanın en başına
+      // kaydırmak yeterli (bkz. _scrollController dokümantasyonu).
+      unawaited(_scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOutCubic,
+      ));
+    }
+
+    // Zaten bir seek/init sürüyorsa native tarafa ÜST ÜSTE çağrı gitmesin —
+    // en son istenen tespiti hatırla, iş bitince ona uygulanır (bkz.
+    // _videoMesgul dokümantasyonu). Hiçbir dokunuş kaybolmaz, ama asla iki
+    // işlem aynı anda çakışmaz.
+    if (_videoMesgul) {
+      _beklemedekiTespit = d;
+      return;
+    }
+    await _videoyuHedefeGetir(d);
+  }
+
+  Future<void> _videoyuHedefeGetir(Detection d) async {
+    _videoMesgul = true;
+    try {
+      final hedef = saniyeyeGoreKonum(d.zamanSaniye!);
+
+      if (_videoController == null) {
+        setState(() {
+          _videoYukleniyor = true;
+          _videoHata = null;
+        });
+        final controller = VideoPlayerController.file(File(widget.item.path));
+        // await'ten ÖNCE ata: init sırasında widget dispose olursa (iş
+        // değişti, sekmeden çıkıldı) dispose()'un temizleyecek bir şeyi
+        // olsun — video_card.dart:_initPlayer ile aynı örüntü.
+        _videoController = controller;
+        try {
+          await controller.initialize();
+          final sinirli =
+              hedef > controller.value.duration ? controller.value.duration : hedef;
+          await controller.seekTo(sinirli);
+          await controller.pause();
+          if (!mounted) return;
+          setState(() => _videoYukleniyor = false);
+        } catch (e) {
+          if (!mounted) return;
+          setState(() {
+            _videoHata = '$e';
+            _videoYukleniyor = false;
+          });
+        }
+      } else {
+        final c = _videoController!;
+        final sinirli = hedef > c.value.duration ? c.value.duration : hedef;
+        // Yeni dokunuşta HER ZAMAN kes ve donuk kareye geç — oynatma
+        // sürüyor olsa bile "bu tespite dokun -> o anı gör" önceliklidir.
+        await c.pause();
+        await c.seekTo(sinirli);
+        if (mounted) setState(() {});
+      }
+    } finally {
+      _videoMesgul = false;
+      final sonraki = _beklemedekiTespit;
+      _beklemedekiTespit = null;
+      if (sonraki != null && mounted) {
+        unawaited(_videoyuHedefeGetir(sonraki));
+      }
+    }
+  }
+
+  void _oynatDurdur() {
+    final c = _videoController;
+    if (c == null || !c.value.isInitialized) return;
+    c.value.isPlaying ? c.pause() : c.play();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final item = widget.item;
     final result = item.aiResult!;
     final topDetection = _highestConfidence(result.detections);
 
@@ -300,6 +449,7 @@ class _ResultContent extends StatelessWidget {
       onRefresh: () => context.read<SessionController>().refreshAiResults(),
       color: AppTheme.navy,
       child: ListView(
+        controller: _scrollController,
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
@@ -320,13 +470,18 @@ class _ResultContent extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          if (result.vehicleInfo != null)
-            Entrance(delayMs: 60, child: _VehicleCard(info: result.vehicleInfo!)),
+          // Video önizleme kanıt kartının içinde olduğu için (dokununca en
+          // başa kaydırıyoruz) bu kart araç/plaka kartından ÖNCE geliyor —
+          // kaydırma sonrası kullanıcı önce videoyu görsün, plaka kartını
+          // aramasın (7 Ağustos: sıra tam tersiydi, kullanıcı isteğiyle
+          // değişti).
           if (topDetection != null) ...[
-            const SizedBox(height: 12),
             Entrance(
-                delayMs: 120, child: _evidenceCard(topDetection, result.detections)),
+                delayMs: 60, child: _evidenceCard(topDetection, result.detections)),
+            const SizedBox(height: 12),
           ],
+          if (result.vehicleInfo != null)
+            Entrance(delayMs: 120, child: _VehicleCard(info: result.vehicleInfo!)),
           const SizedBox(height: 16),
           Entrance(
             delayMs: 180,
@@ -491,6 +646,11 @@ class _ResultContent extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 6),
+          const Text(
+            'Bu değer yukarıdaki "Lifebox\'a gönder" paketine MD5 ile birlikte zaten dahil.',
+            style: TextStyle(fontSize: 11, color: AppTheme.inkSoft),
+          ),
         ],
       ),
     );
@@ -522,68 +682,91 @@ class _ResultContent extends StatelessWidget {
           const Text('En güçlü tespit',
               style: TextStyle(fontSize: 11.5, color: AppTheme.inkSoft)),
           const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: kategoriRenk(top.kategori).withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(14),
+          // Tutarlılık için: aşağıdaki liste satırları ve zaman çizelgesi
+          // noktaları da tıklanabilir, en belirgin kart tıklanamaz kalırsa
+          // kafa karıştırır.
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: top.zamanSaniye == null ? null : () => _tespitiGoster(top),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: kategoriRenk(top.kategori).withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child:
+                      Icon(iconFor(top.etiket), color: kategoriRenk(top.kategori), size: 25),
                 ),
-                child: Icon(iconFor(top.etiket), color: kategoriRenk(top.kategori), size: 25),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(prettyLabel(top.etiket),
-                        style:
-                            const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        _timeChip(top.zamanSaniye),
-                        const SizedBox(width: 6),
-                        Text(
-                          kategoriAd(top.kategori),
-                          style: TextStyle(
-                            color: kategoriRenk(top.kategori),
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(prettyLabel(top.etiket),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 15)),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          _timeChip(top.zamanSaniye),
+                          const SizedBox(width: 6),
+                          Text(
+                            kategoriAd(top.kategori),
+                            style: TextStyle(
+                              color: kategoriRenk(top.kategori),
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              if (top.confidenceScore != null)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '%${(top.confidenceScore! * 100).toStringAsFixed(0)}',
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.navy,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                        ],
                       ),
-                    ),
-                    const Text('güven',
-                        style: TextStyle(fontSize: 10.5, color: AppTheme.inkSoft)),
-                  ],
+                    ],
+                  ),
                 ),
-            ],
+                if (top.confidenceScore != null)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        '%${(top.confidenceScore! * 100).toStringAsFixed(0)}',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.navy,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      const Text('güven',
+                          style: TextStyle(fontSize: 10.5, color: AppTheme.inkSoft)),
+                    ],
+                  ),
+              ],
+            ),
           ),
           const SizedBox(height: 14),
+          // Tespit anını gösteren donuk video önizleme — zaman çizelgesinin
+          // HEMEN ÜSTÜNDE, sabit yükseklikte (dört durumda da aynı boy).
+          _VideoOnizlemeKarti(
+            controller: _videoController,
+            yukleniyor: _videoYukleniyor,
+            hata: _videoHata,
+            secilenTespit: _secilenTespit,
+            onPlayPause: _oynatDurdur,
+          ),
+          const SizedBox(height: 10),
           const Text('Video zaman çizelgesi',
               style: TextStyle(fontSize: 11, color: AppTheme.inkSoft)),
           const SizedBox(height: 6),
-          _DetectionTimeline(detections: all, maxTime: maxTime <= 0 ? 1 : maxTime),
+          _DetectionTimeline(
+            detections: all,
+            maxTime: maxTime <= 0 ? 1 : maxTime,
+            selected: _secilenTespit,
+            onSelect: _tespitiGoster,
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 12,
@@ -671,57 +854,70 @@ class _ResultContent extends StatelessWidget {
 
   Widget _detectionRow(Detection d) {
     final renk = kategoriRenk(d.kategori);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 9),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: renk.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(10),
+    // `Detection` nesneleri `done` bir iş için asla yeniden yaratılmıyor
+    // (refreshAiResults yalnızca `processing` işleri sorguluyor) — identity
+    // karşılaştırması güvenli.
+    final secili = identical(d, _secilenTespit);
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: d.zamanSaniye == null ? null : () => _tespitiGoster(d),
+      child: Container(
+        color: secili ? renk.withValues(alpha: 0.06) : Colors.transparent,
+        padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 4),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: renk.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(iconFor(d.etiket), color: renk, size: 17),
             ),
-            child: Icon(iconFor(d.etiket), color: renk, size: 17),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              prettyLabel(d.etiket),
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
-            ),
-          ),
-          _timeChip(d.zamanSaniye),
-          if (d.confidenceScore != null) ...[
             const SizedBox(width: 10),
-            SizedBox(
-              width: 40,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '%${(d.confidenceScore! * 100).toStringAsFixed(0)}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      value: d.confidenceScore!.clamp(0.0, 1.0),
-                      minHeight: 3,
-                      backgroundColor: Colors.black.withValues(alpha: 0.06),
-                      valueColor: AlwaysStoppedAnimation(renk),
-                    ),
-                  ),
-                ],
+            Expanded(
+              child: Text(
+                prettyLabel(d.etiket),
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
               ),
             ),
+            if (secili) ...[
+              Icon(Icons.play_circle_fill, size: 16, color: renk),
+              const SizedBox(width: 6),
+            ],
+            _timeChip(d.zamanSaniye),
+            if (d.confidenceScore != null) ...[
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 40,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '%${(d.confidenceScore! * 100).toStringAsFixed(0)}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: d.confidenceScore!.clamp(0.0, 1.0),
+                        minHeight: 3,
+                        backgroundColor: Colors.black.withValues(alpha: 0.06),
+                        valueColor: AlwaysStoppedAnimation(renk),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -891,7 +1087,7 @@ class _Md5CardState extends State<_Md5Card> {
                 }
               },
               icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-              label: const Text('results.json + MD5\'i Lifebox\'a gönder'),
+              label: const Text('results.json + MD5 + SHA256\'yı Lifebox\'a gönder'),
             ),
           ),
         ],
@@ -1243,7 +1439,24 @@ class _DetectionTimeline extends StatelessWidget {
   final List<Detection> detections;
   final double maxTime;
 
-  const _DetectionTimeline({required this.detections, required this.maxTime});
+  /// Şu an video önizlemesinde donuk gösterilen tespit — o noktanın çizelgede
+  /// büyütülüp çerçevelenmesi için (bkz. `_ResultContentState._secilenTespit`).
+  final Detection? selected;
+
+  /// Bir noktaya dokununca çağrılır (`_ResultContentState._tespitiGoster`).
+  final void Function(Detection)? onSelect;
+
+  const _DetectionTimeline({
+    required this.detections,
+    required this.maxTime,
+    this.selected,
+    this.onSelect,
+  });
+
+  // Görsel işaretçi yalnızca 4px genişliğinde — parmakla dokunmak için çok
+  // dar. Görünmez ama daha geniş bir dokunma alanı (bu sabit), işaretçiyi
+  // ortalayarak sarar.
+  static const double _dokunmaAlani = 28;
 
   @override
   Widget build(BuildContext context) {
@@ -1253,8 +1466,9 @@ class _DetectionTimeline extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              height: 20,
+              height: _dokunmaAlani,
               child: Stack(
+                clipBehavior: Clip.none,
                 alignment: Alignment.centerLeft,
                 children: [
                   Container(
@@ -1268,14 +1482,22 @@ class _DetectionTimeline extends StatelessWidget {
                   for (final d in detections)
                     if (d.zamanSaniye != null)
                       Positioned(
+                        // İşaretçinin (4px) görsel merkezini koruyarak
+                        // etrafına _dokunmaAlani genişliğinde bir kutu koyar.
                         left: (d.zamanSaniye! / maxTime).clamp(0.0, 1.0) *
-                            (constraints.maxWidth - 4),
-                        child: Container(
-                          width: 4,
-                          height: 20,
-                          decoration: BoxDecoration(
-                            color: kategoriRenk(d.kategori),
-                            borderRadius: BorderRadius.circular(2),
+                                (constraints.maxWidth - 4) +
+                            2 -
+                            _dokunmaAlani / 2,
+                        width: _dokunmaAlani,
+                        height: _dokunmaAlani,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onSelect == null ? null : () => onSelect!(d),
+                          child: Center(
+                            child: _TimelineIsaretci(
+                              renk: kategoriRenk(d.kategori),
+                              secili: identical(d, selected),
+                            ),
                           ),
                         ),
                       ),
@@ -1301,6 +1523,235 @@ class _DetectionTimeline extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Zaman çizelgesindeki tek bir tespit işaretçisi — seçiliyken büyür ve
+/// çerçevelenir (bkz. `_DetectionTimeline`).
+class _TimelineIsaretci extends StatelessWidget {
+  final Color renk;
+  final bool secili;
+
+  const _TimelineIsaretci({required this.renk, required this.secili});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: secili ? 7 : 4,
+      height: secili ? 24 : 20,
+      decoration: BoxDecoration(
+        color: renk,
+        borderRadius: BorderRadius.circular(3),
+        border: secili ? Border.all(color: AppTheme.navy, width: 1.5) : null,
+        boxShadow: secili
+            ? [BoxShadow(color: renk.withValues(alpha: 0.5), blurRadius: 4)]
+            : null,
+      ),
+    );
+  }
+}
+
+/// Tespit anını gösteren donuk video önizleme — `widget.item.path`'teki
+/// yerel MP4'ten, kaydırma/network olmadan. Dört durum, HEPSİ AYNI sabit
+/// yükseklikte (`_ResultContentState._videoKartYuksekligi`) — kart state
+/// değiştikçe boy zıplamasın (sayfa en başa kaydırıldığı için scroll hedefi
+/// bu widget'a bağlı değil artık, ama boyut kararlılığı yine de önemli).
+///
+/// `BoxFit.cover` BİLİNÇLİ OLARAK KULLANILMIYOR: kırpma, tespit edilen olayı
+/// tam da görmek istediğimiz kare dışına atabilir — amaç "görsel doğrulama"
+/// olduğu için bir `Center`+`AspectRatio` (letterbox/"contain") kullanılıyor,
+/// dikey ya da yatay kayıt fark etmeksizin kare tam görünür.
+class _VideoOnizlemeKarti extends StatelessWidget {
+  static const double yukseklik = 200;
+
+  final VideoPlayerController? controller;
+  final bool yukleniyor;
+  final String? hata;
+  final Detection? secilenTespit;
+  final VoidCallback onPlayPause;
+
+  const _VideoOnizlemeKarti({
+    required this.controller,
+    required this.yukleniyor,
+    required this.hata,
+    required this.secilenTespit,
+    required this.onPlayPause,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: SizedBox(
+        height: yukseklik,
+        width: double.infinity,
+        child: _icerik(),
+      ),
+    );
+  }
+
+  Widget _icerik() {
+    if (hata != null) {
+      return Container(
+        color: const Color(0xFFFDECEC),
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: Text(
+            'Video oynatılamadı: $hata',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppTheme.danger, fontSize: 12),
+          ),
+        ),
+      );
+    }
+
+    final c = controller;
+    if (c != null && c.value.isInitialized) {
+      return AnimatedBuilder(
+        animation: c,
+        builder: (context, _) {
+          final konum = c.value.position;
+          final sure = c.value.duration;
+          return Container(
+            color: AppTheme.navy,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: c.value.aspectRatio,
+                    child: VideoPlayer(c),
+                  ),
+                ),
+                Positioned.fill(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: onPlayPause,
+                      child: Center(
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 150),
+                          opacity: c.value.isPlaying ? 0.0 : 1.0,
+                          child: Container(
+                            width: 52,
+                            height: 52,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.play_arrow,
+                                color: Colors.white, size: 30),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                if (secilenTespit != null)
+                  Positioned(
+                    left: 8,
+                    bottom: 8,
+                    child: _etiketRozeti(secilenTespit!),
+                  ),
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: _konumRozeti(konum, sure),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    }
+
+    if (yukleniyor) {
+      return Container(
+        color: AppTheme.navy,
+        child: const Center(
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white70),
+          ),
+        ),
+      );
+    }
+
+    // Boş yer tutucu — henüz hiçbir tespite dokunulmadı (ve en güçlü tespit
+    // yoksa initState de otomatik yüklemedi).
+    return Container(
+      color: AppTheme.navy,
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.movie_creation_outlined, color: Colors.white38, size: 28),
+            SizedBox(height: 8),
+            Text(
+              'Bir tespite dokunarak o anı görüntüle',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _etiketRozeti(Detection d) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration:
+                BoxDecoration(color: kategoriRenk(d.kategori), shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            '${prettyLabel(d.etiket)} · ${d.zamanSaniye?.toStringAsFixed(1) ?? '-'}s',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _konumRozeti(Duration konum, Duration sure) {
+    String fmt(Duration d) {
+      final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+      final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+      return '$m:$s';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        '${fmt(konum)} / ${fmt(sure)}',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontFamily: AppTheme.monoFamily,
+          fontFeatures: [FontFeature.tabularFigures()],
+        ),
+      ),
     );
   }
 }
