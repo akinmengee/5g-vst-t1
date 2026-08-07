@@ -361,6 +361,13 @@ MAR_MIN_ACIKLIK = 0.015    # oran ne kadar buyuk olursa olsun, agiz bu mutlak ac
                            # (agiz kapaliyken) piksel-alti landmark titremesi oranı 2-3
                            # kat sicratabiliyor, mutlak esik bu gurultuyu eler
 DONUK_OFFSET = 0.30; T_ARKAYA = 3.0; T_ETRAFA_MIN = 1.2
+# 07.08 kullanici istegi: ufak yan bakislar etrafa_bakinma SAYILMASIN --
+# kosunun TEPE donme siddeti (|burun-omuz orani|) bu esigi asmali. Arkaya
+# bakma kanallari (sure>=T_ARKAYA + mediapipe yuz-kayip) etkilenmez, ayrim
+# korunur. Deger faz2 dokum taramasiyla kalibre edildi (BAKINMA_LOG=1).
+# faz2 dokumu: FP kosusu (82.9) tepe 0.49, gercek TP (92.58) tepe 1.28 --
+# 0.80 ikisini genis payla ayirir.
+ETRAFA_OFFSET_MIN = float(os.environ.get("ETRAFA_OFFSET_MIN", "0.80"))
 ARKAYA_ETRAFA_SOGUMA_SN = 6.0  # son bu kadar sn icinde etrafa_bakinma yazildiysa mediapipe-tabanli arkaya_bakma bastirilir
 YUZ_BOSLUK_TOLERANS = 2  # yuz_kayip_seg icin -- bu kadar ardisik "yuz bulundu" titremesi seriyi bozmaz
 ARAC_KENAR_PAY = 3   # arac kutusu kare sol/sag kenarina bu kadar piksel ya da daha az
@@ -642,8 +649,11 @@ def bakinma_seg(off_kayit, dt):
             j = i; yon = durum[i][1]
             while j+1 < n and durum[j+1][1] == yon: j += 1
             sure = (durum[j][0]-durum[i][0]) + dt; orta = (durum[i][0]+durum[j][0])/2
+            tepe_off = max(abs(off_kayit[k][1]) for k in range(i, j+1)
+                           if off_kayit[k][1] is not None)
             if sure >= T_ARKAYA: out.append(("arkaya_bakma", orta, sure))
-            elif sure >= T_ETRAFA_MIN: out.append(("etrafa_bakinma", orta, sure))
+            elif sure >= T_ETRAFA_MIN and tepe_off >= ETRAFA_OFFSET_MIN:
+                out.append(("etrafa_bakinma", orta, sure))
             i = j+1
         else: i += 1
     return out
@@ -1063,7 +1073,10 @@ def run_inference(video_path):
     kaynak_yukseklik = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     on_olcek = 1.0
     if 0 < kaynak_genislik < 640:
-        on_olcek = 1280.0 / kaynak_genislik
+        # ON_BUYUTME_HEDEF: dusuk cozunurluk girdinin buyutulecegi genislik
+        # (varsayilan 1280; 1920 A/B'si 07.08 240p optimizasyonu icin eklendi --
+        # kucuk nesne kanallari teknocan/su/sigara 240p'de kor kaliyor).
+        on_olcek = float(os.environ.get("ON_BUYUTME_HEDEF", "1280")) / kaynak_genislik
     efektif_genislik = int(kaynak_genislik * on_olcek) if kaynak_genislik else 0
     efektif_yukseklik = int(kaynak_yukseklik * on_olcek) if kaynak_yukseklik else 0
 
@@ -1935,6 +1948,15 @@ def run_inference(video_path):
     cap.release()
     if out_video is not None:
         out_video.release()
+
+    if os.environ.get("BAKINMA_LOG") == "1":
+        # bakinma zaman serisi dokumu (ETRAFA_OFFSET_MIN kalibrasyonu icin)
+        try:
+            with open(os.environ.get("BAKINMA_LOG_YOL", "/app/data/output/bakinma_dokum.json"),
+                      "w", encoding="utf-8") as bf:
+                json.dump(off_kayit, bf)
+        except OSError:
+            pass
 
     if kemer_log is not None:
         try:
