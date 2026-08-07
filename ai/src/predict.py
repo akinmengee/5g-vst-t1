@@ -141,6 +141,70 @@ color_model = YOLO(os.path.join(WEIGHTS_DIR, 'renk_modeli.pt'))
 plate_model = YOLO(os.path.join(WEIGHTS_DIR, 'plaka_modeli.pt'))
 character_model = YOLO(os.path.join(WEIGHTS_DIR, 'karakter_modeli.pt'))
 
+# --- SERBEST YAZI (plaka-ustu kapatma yazisi) OCR kanali -------------------
+# Final kurali (07.08): plaka kapali, yerinde serbest bir YAZI var ("EVET",
+# "Evleniyoruz!" vb. — Turkce karakter/kucuk harf/bosluk olabilir). 96
+# kompozitlik prova: plaka_modeli kapali plakayi %47 buluyor (kirmizi zemin
+# 0), karakter_modeli alfabesi yetersiz; ARAC ALT-SERIDI + buyutme + CLAHE +
+# EasyOCR(tr+en) ise 96'da 95 TAM okuma. Eski plaka zinciri AYNEN duruyor ve
+# ONCELIKLI: gercek/okunur plaka varsa (faz2 gibi) regex'li zincir kazanir,
+# kilitlenemezse (ortulu plaka) OCR kanalinin oylamali sonucu kullanilir.
+# easyocr yoksa kanal sessizce kapali (eski davranis birebir).
+SERBEST_YAZI_AKTIF = os.environ.get("SERBEST_YAZI", "1") == "1"
+ocr_okuyucu = None
+if SERBEST_YAZI_AKTIF:
+    try:
+        import easyocr as _easyocr
+        _ocr_dizin = os.path.join(WEIGHTS_DIR, "easyocr")
+        _ocr_gpu = torch.cuda.is_available()
+        if os.path.isdir(_ocr_dizin):
+            ocr_okuyucu = _easyocr.Reader(
+                ["tr", "en"], gpu=_ocr_gpu, verbose=False,
+                model_storage_directory=_ocr_dizin, download_enabled=False)
+        else:
+            ocr_okuyucu = _easyocr.Reader(["tr", "en"], gpu=_ocr_gpu, verbose=False)
+    except Exception:
+        ocr_okuyucu = None
+
+YAZI_OKUMA_ARALIGI = 25   # her ~1 sn'de bir dene (25fps varsayimiyla)
+YAZI_KARE_CONF = 0.30     # tek parca icin taban guven
+YAZI_OY_ESIK = 2.5        # oylamada kilitlenme esigi (conf toplami)
+YAZI_OY_TABAN = 1.5       # video sonunda kilit yoksa kabul icin alt esik
+_yazi_clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+
+def _yazi_normalize(s):
+    """Oylama anahtari: buyuk harf + TR->ASCII + yalniz alfanumerik."""
+    s = s.upper().replace("İ", "I").replace("Ş", "S").replace("Ğ", "G") \
+         .replace("Ü", "U").replace("Ö", "O").replace("Ç", "C")
+    return "".join(ch for ch in s if ch.isalnum())
+
+
+def yazi_serit_oku(frame, arac_kutu):
+    """Arac kutusunun alt %45 seridinden yaziyi okur -> (metin, taban_conf).
+
+    Plaka dedektorune bagimli DEGIL: EasyOCR'in kendi yazi-buluculugu
+    (CRAFT) seritte banner'i zeminden bagimsiz bulur (prova: kirmizi zemin
+    12/12). Buyutme + CLAHE, kucuk/uzak yaziyi okunur kiliyor.
+    """
+    ax1, ay1, ax2, ay2 = [int(v) for v in arac_kutu]
+    h = ay2 - ay1
+    serit = frame[max(0, ay1 + int(h * 0.55)):ay2, max(0, ax1):ax2]
+    if serit.size == 0 or serit.shape[0] < 12:
+        return "", 0.0
+    sh, sw = serit.shape[:2]
+    olcek = max(1, int(round(420.0 / sh)))
+    buyuk = cv2.resize(serit, (sw * olcek, sh * olcek), interpolation=cv2.INTER_CUBIC)
+    lab = cv2.cvtColor(buyuk, cv2.COLOR_BGR2LAB)
+    l_k, a_k, b_k = cv2.split(lab)
+    buyuk = cv2.cvtColor(cv2.merge((_yazi_clahe.apply(l_k), a_k, b_k)), cv2.COLOR_LAB2BGR)
+    parcalar = [p for p in ocr_okuyucu.readtext(buyuk) if p[2] >= YAZI_KARE_CONF]
+    if not parcalar:
+        return "", 0.0
+    parcalar.sort(key=lambda p: min(n[0] for n in p[0]))
+    return " ".join(p[1] for p in parcalar).strip(), min(p[2] for p in parcalar)
+# ---------------------------------------------------------------------------
+
 slalom_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 slalom_model = SlalomLSTM(input_size=1, hidden_size=128, num_layers=2)
 slalom_model.load_state_dict(torch.load(os.path.join(WEIGHTS_DIR, 'slalom_lstm.pt'), map_location=slalom_device, weights_only=True))
@@ -172,6 +236,35 @@ yolcu_model_koltuk = YOLO(os.path.join(WEIGHTS_DIR, "yolcu.pt"))
 # kendi ozel poz modelini (s-pose, n-pose'tan farkli) kullanir; bakinma'nin kullandigi
 # "poz" (n-pose) ile karismasin diye ayri bir ornek.
 sigara_model = YOLO(os.path.join(WEIGHTS_DIR, "sigara.pt"))
+# ELYUZE_SIGARA=1: sigara kanali sigara.pt yerine birlesik el-yuze modelinin
+# (elyuze.pt; 0=su_icme 1=telefon 2=sigara) YALNIZ sigara sinifiyla calisir.
+# Faz2 olcumu (07.08): birlesik model sigara GT'lerinin 3/3'unu goruyor
+# (0.55-0.82), eski model 92.6'yi kaciriyor. Su/telefon siniflari kullanilmaz
+# (ayni olcumde su asiri-atesli, telefon faz2'de kor). Agirlik yoksa bayrak
+# sessizce yok sayilir (imaja elyuze.pt konmadan da ayni kod calisir).
+# VARSAYILAN ACIK (07.08 VM olcumu: hibrit sigara 2/3->3/3, FP sayisi ayni,
+# genel F1@5s 0.79->0.81); ELYUZE_SIGARA=0 ile kapatilabilir.
+ELYUZE_SIGARA_AKTIF = False
+_elyuze_yol = os.path.join(WEIGHTS_DIR, "elyuze.pt")
+if os.environ.get("ELYUZE_SIGARA", "1") == "1" and os.path.exists(_elyuze_yol):
+    sigara_model = YOLO(_elyuze_yol)
+    ELYUZE_SIGARA_AKTIF = True
+# ARACICI (arac_ici_v1, 07.08; 0=su_icme 1=telefon 2=sigara): izole faz2
+# olcumunde 7/7 GT el-yuze olayi + SIFIR FP kosusu (esik 0.35-0.7 tum
+# degerlerde, capraz sinif karisimi sifir) -- uc el-yuze kanalini tek modele
+# baglama adayi. Kanal kanal A/B icin ARACICI_SU/TELEFON/SIGARA=0 ile tek tek
+# kapatilabilir; ARACICI=0 ya da agirlik yoksa tamamen devre disi (v18 duzeni
+# aynen calisir). ARACICI_SIGARA, ELYUZE_SIGARA'dan onceliklidir.
+aracici_model = None
+_aracici_yol = os.path.join(WEIGHTS_DIR, "aracici.pt")
+if os.environ.get("ARACICI", "1") == "1" and os.path.exists(_aracici_yol):
+    aracici_model = YOLO(_aracici_yol)
+ARACICI_SU = aracici_model is not None and os.environ.get("ARACICI_SU", "1") == "1"
+ARACICI_TELEFON = aracici_model is not None and os.environ.get("ARACICI_TELEFON", "1") == "1"
+# SIGARA VARSAYILAN KAPALI (07.08 takim karari): arac_ici sigara kanali
+# pipeline'da 2 FP uretti (3.8 + 49.6cift-rapor); sigara mevcut duzende
+# (elyuze hibrit, 3TP/1FP) kalir, arac_ici yalniz su+telefon'u tasir.
+ARACICI_SIGARA = aracici_model is not None and os.environ.get("ARACICI_SIGARA", "0") == "1"
 telefon_model = YOLO(os.path.join(WEIGHTS_DIR, "telefon.pt"))
 poz_s = YOLO(os.path.join(WEIGHTS_DIR, "yolov8s-pose.pt"))
 modeller = {
@@ -179,6 +272,21 @@ modeller = {
     "kemer":   YOLO(os.path.join(WEIGHTS_DIR, "kemer.pt")),
     "esneme":  YOLO(os.path.join(WEIGHTS_DIR, "esneme.pt"))
 }
+# --- HIBRIT KEMER (kemer2 = kemer_v2, parlak-domain modeli) ---------------
+# 07.08 kalibrasyonu (kemer_hibrit_kalibre.py, faz2+aydinlik serileri):
+# kemer_v2'nin 0.45-0.64 bandindaki VAR'lari GT ihlallerinde ZEHIRLI (saati
+# yanlis sifirlar), >=0.65 VAR'lari ise mesru — parlakta FP supurur. YOK
+# sinifi >=0.55 + 1sn sureklilikle gercek ihlal kaniti. kemer2.pt yoksa ya
+# da KEMER2=0 ise kanal tamamen kapali (eski davranis birebir).
+kemer2_model = None
+_kemer2_yol = os.path.join(WEIGHTS_DIR, "kemer2.pt")
+if os.environ.get("KEMER2", "1") == "1" and os.path.exists(_kemer2_yol):
+    kemer2_model = YOLO(_kemer2_yol)
+KEMER2_VAR_ESIK = float(os.environ.get("KEMER2_VAR_ESIK", "0.65"))
+KEMER2_YOK_ESIK = float(os.environ.get("KEMER2_YOK_ESIK", "0.55"))
+KEMER2_YOK_SN = float(os.environ.get("KEMER2_YOK_SN", "1.0"))
+KEMER2_YOK_BOSLUK = 0.6   # yok kosusunda izin verilen karar boslugu (sn)
+
 TASK_YOLU = os.path.join(WEIGHTS_DIR, "face_landmarker.task")
 secenek = mp_vision.FaceLandmarkerOptions(
     base_options=mp_python.BaseOptions(model_asset_path=TASK_YOLU),
@@ -267,6 +375,9 @@ SIGTEL_KANIT_ESIGI = 1.0        # K6: pencerede toplanmasi gereken agirlik
 SIGTEL_SOGUMA_SN = 3.0          # K7: ayni olay bu sure icinde tekrar raporlanmaz
 
 SIGARA_ZAYIF_CONF = 0.55        # K5: bu altindaki tespitler yok sayilir
+ELYUZE_SIGARA_CONF = 0.50       # birlesik modelin sigara sinifi icin taban -- GT
+                                # anlarindaki en dusuk olcum 0.55'ti, kirpim farki
+                                # payi icin 0.05 asagida tutuldu
 SIGARA_KIRPIM_BUYUTME = 3       # kirpim modele verilmeden once kac kat buyutulur
 
 TELEFON_ZAYIF_CONF = 0.55       # K5
@@ -296,6 +407,15 @@ YOLCU_SOFOR_DUP_ORAN = 0.5
 YOLCU_LOCK_MIN_CONF = 0.25
 YOLCU_SOFOR_YENIDEN_KAZANIM_ORANI = 0.20
 YOLCU_ARDISIK_GEREK = 2    # kilitleme icin 2 ardisik (islenen) kare yeterli
+# --- ON YOLCU sol-yari bolge kurali (07.08 lokal kaniti) ---
+# Arac ROI'sinin SOL yarisinda (arkadan bakista sol = on-yolcu tarafinin karsisi
+# DEGIL: kabin on-sol bolgesi), soforden yatayda belirgin ayrik, yuksek guvenli
+# kisi = on koltuk yolcusu. Olcum: GT 98.56'daki on yolcu cx~0.47/conf 0.87'yle
+# yakalandi, videonun kalaninda sifir sahte aday kovasi.
+ON_YOLCU_CONF = 0.60           # aday icin taban guven (olcumdeki yakalama 0.87)
+ON_YOLCU_AYRIM_ORAN = 0.12     # soforle yatay ayrim: arac genisliginin orani
+ON_YOLCU_ARDISIK_GEREK = 2     # ardisik islenen kare (~1 sn) israr sarti
+ON_YOLCU_YENIDEN_SN = 12.0     # ayni kosuda yeniden yazma araligi
 UST_DUDAK, ALT_DUDAK, SOL_KOSE, SAG_KOSE = 13, 14, 78, 308
 
 def _arac_roi_parlaklik_duzelt(img):
@@ -378,8 +498,8 @@ def esneme_mar(yuz_sonuc):
     if not yuz_sonuc or not yuz_sonuc.face_landmarks: return None
     return mar_hesapla(yuz_sonuc.face_landmarks[0])
 
-def su_bul(model, bolge, esik, yuz_sonuc):
-    sonuc = model(bolge, conf=esik, verbose=False)[0]
+def su_bul(model, bolge, esik, yuz_sonuc, siniflar=None):
+    sonuc = model(bolge, conf=esik, classes=siniflar, verbose=False)[0]
     H, W = bolge.shape[:2]
     
     agiz_merkez_x, agiz_merkez_y = None, None
@@ -411,6 +531,52 @@ def su_bul(model, bolge, esik, yuz_sonuc):
             en_iyi_kutu = (bx1, by1, bx2, by2)
                 
     return en_iyi_g, en_iyi_kutu
+
+SU_GENIS_ESIK = 0.50  # genis-baglam ikinci bakisin esigi (agiz filtresi yok, telafi)
+# SU_GENIS=1 ile acilir; VARSAYILAN KAPALI. v17 tam-pipeline olcumu (07.08):
+# genis bakis GT 28.9+63.2'yi kurtardi (su 2/2) AMA 5 su FP uretti ve el-yuze
+# munhasirligi uzerinden 2 sigara TP'sini sildi -- net F1 0.78 -> 0.75. Kural
+# rafine edilene kadar arastirma kapisi olarak duruyor, uretimde kullanilmiyor.
+SU_GENIS_AKTIF = os.environ.get("SU_GENIS", "0") == "1"
+
+
+def su_genis_bak(model, frame, sofor_kutu, arac_kutu=None):
+    """Dar kirpimda su bulunamazsa GENIS baglamli + CLAHE'li ikinci bakis.
+
+    07.08 kirpim taramasi: GT 63.16'daki sise dar sofor kirpiminin DISINDA
+    kaliyor -- genis(+%40 pad)+CLAHE kirpimda eski su modeli 0.56 veriyor,
+    su FP pencerelerinde ise <=0.17 (temiz). Agiz-hizasi filtresi bu kirpimda
+    uygulanamadigi icin esik bilerek yuksek (SU_GENIS_ESIK).
+
+    SOFOR HIC BULUNAMADIYSA (kenar/aci -- 07.08 sondasi: GT 28.9 kosusunun bir
+    kismi ve 63.16 oncesi boyle) arac ROI'sinin SAG yarisinda aranir: soldan
+    direksiyonlu aracta surucu+sise sag yarida.
+    """
+    H, W = frame.shape[:2]
+    if sofor_kutu is not None:
+        x1, y1, x2, y2 = [int(v) for v in sofor_kutu]
+        px, py = int((x2 - x1) * 0.40), int((y2 - y1) * 0.40)
+        gen = frame[max(0, y1 - py):min(H, y2 + py), max(0, x1 - px):min(W, x2 + px)]
+    elif arac_kutu is not None:
+        ax1, ay1, ax2, ay2 = [int(v) for v in arac_kutu]
+        orta = (ax1 + ax2) // 2
+        gen = frame[max(0, ay1):min(H, ay2), max(0, orta):min(W, ax2)]
+    else:
+        return 0.0
+    if gen.size == 0:
+        return 0.0
+    gen = cv2.resize(gen, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    gen = _arac_roi_parlaklik_duzelt(gen)
+    r = model(gen, conf=SU_GENIS_ESIK, verbose=False)[0]
+    h, w = gen.shape[:2]
+    en = 0.0
+    for k in r.boxes:
+        bx1, by1, bx2, by2 = k.xyxy[0].tolist()
+        if (bx2 - bx1) > w * 0.45 or (by2 - by1) > h * 0.5:
+            continue  # sise soforun yarisi kadar buyuk olamaz (su_bul ile ayni fikir)
+        en = max(en, float(k.conf))
+    return en
+
 
 def bakinma_olc(bolge):
     r = poz(bolge, conf=0.25, verbose=False)[0]
@@ -576,7 +742,12 @@ def sigara_kirpimda_ara(frame, bolge):
     kb = min(kirpim.shape[0], kirpim.shape[1])
     buyuk = cv2.resize(kirpim, None, fx=SIGARA_KIRPIM_BUYUTME, fy=SIGARA_KIRPIM_BUYUTME,
                        interpolation=cv2.INTER_CUBIC)
-    r = sigara_model(buyuk, conf=SIGARA_ZAYIF_CONF, verbose=False)[0]
+    if ARACICI_SIGARA:
+        r = aracici_model(buyuk, conf=ELYUZE_SIGARA_CONF, classes=[2], verbose=False)[0]
+    elif ELYUZE_SIGARA_AKTIF:
+        r = sigara_model(buyuk, conf=ELYUZE_SIGARA_CONF, classes=[2], verbose=False)[0]
+    else:
+        r = sigara_model(buyuk, conf=SIGARA_ZAYIF_CONF, verbose=False)[0]
     if not len(r.boxes):
         return 0.0, None, kb
     b = r.boxes[int(r.boxes.conf.argmax())]
@@ -592,7 +763,7 @@ def sigara_isle(frame, en_arac, kare_alani, sofor_kutu_bilinen=None):
     arac_orani = ((en_arac[2]-en_arac[0]) * (en_arac[3]-en_arac[1])) / kare_alani
     bolge, _ = sigara_surucu_bolgesi(frame, en_arac, sofor_kutu_bilinen)
     conf, kutu, kb = sigara_kirpimda_ara(frame, bolge)
-    if conf < SIGARA_ZAYIF_CONF:
+    if conf < (ELYUZE_SIGARA_CONF if (ARACICI_SIGARA or ELYUZE_SIGARA_AKTIF) else SIGARA_ZAYIF_CONF):
         return 0.0, conf
     a = _sigtel_kutu_agirligi(conf, kb, arac_orani, kutu, bolge)
     return a, conf
@@ -657,17 +828,22 @@ def telefon_on_cam_bolgesi(arac):
     return [ax1+aw*0.22, ay1+ah*0.02, ax2-aw*0.02, ay1+ah*0.52]
 
 def telefon_hazirla(kirpim):
-    """Uyarlanabilir yakinlastirma + K16 dusuk isik iyilestirmesi (CLAHE)."""
+    """Uyarlanabilir yakinlastirma + CLAHE.
+
+    CLAHE artik HER ZAMAN uygulanir (eskiden yalniz karanlik karede, K16):
+    07.08 kirpim taramasi olcumu -- GT telefon anlarinda eski modelin yaniti
+    CLAHE'yle 0.28->0.58 ve 0.54->0.74'e cikiyor. FP riski K-kurallariyla
+    (poz kapilari) sinirli; tam-pipeline faz2 skorunda dogrulanacak.
+    """
     h, w = kirpim.shape[:2]
     z = float(np.clip(TELEFON_HEDEF_GENISLIK / max(w, 1), 1.0, TELEFON_MAKS_ZOOM))
     buyuk = (cv2.resize(kirpim, None, fx=z, fy=z, interpolation=cv2.INTER_CUBIC)
              if z > 1.001 else kirpim.copy())
     karanlik = float(buyuk.mean()) < TELEFON_KARANLIK_ESIK
-    if karanlik:
-        lab = cv2.cvtColor(buyuk, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        l = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(l)
-        buyuk = cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+    lab = cv2.cvtColor(buyuk, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(l)
+    buyuk = cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
     return buyuk, z, karanlik
 
 def telefon_poz_bul(buyuk, ofs, z):
@@ -728,7 +904,10 @@ def telefon_kirpimda_ara(frame, arac, sofor_kutu_bilinen=None):
         b2, z2, _ = telefon_hazirla(k2)
 
     conf, kutu = 0.0, None
-    rt = telefon_model(b2, conf=TELEFON_ZAYIF_CONF, verbose=False)[0]
+    if ARACICI_TELEFON:
+        rt = aracici_model(b2, conf=TELEFON_ZAYIF_CONF, classes=[1], verbose=False)[0]
+    else:
+        rt = telefon_model(b2, conf=TELEFON_ZAYIF_CONF, verbose=False)[0]
     if len(rt.boxes):
         b = rt.boxes[int(rt.boxes.conf.argmax())]
         conf = float(b.conf[0])
@@ -989,6 +1168,18 @@ def run_inference(video_path):
     yolcu_ardisik_son_kare = {} # track_id -> en son goruldugu islenen-kare sirasi
     yolcu_kilitli_idler = set()  # bu ID zaten JSON'a yazildi mi (ayni kisi tekrar tekrar yazilmaz, ama yeni bir kisi -- yeni ID -- yeniden yazilabilir)
     yolcu_islenen_kare_sirasi = 0
+    # ON YOLCU (sol-yari kurali) durumu -- ID'ye DAYANMAZ (BoT-SORT id'leri 0.5
+    # sn'lik seyrek cagrilarda kopuyor; yukaridaki id-kilit sayaci faz2'de bu
+    # yuzden hic dolmadi). Nitelikli adayin varligi konum-tabanli sayilir.
+    on_yolcu_ardisik = 0
+    on_yolcu_son_kare = None
+    on_yolcu_tepe_conf = 0.0
+    on_yolcu_yazilan_son = None
+    # SERBEST YAZI (ortulu plaka) durumu: normalize anahtar uzerinde
+    # guven-agirlikli oylama; kilitlenince okuma durur (sure tasarrufu).
+    yazi_oylar = {}      # normalize_anahtar -> conf toplami
+    yazi_hamlar = {}     # normalize_anahtar -> {ham_metin: sayi}
+    yazi_kilit = None
     # SIGARA + TELEFON: zamansal kanit birikimi durumu (K6/K7/K12/K15)
     sigara_pencere = deque()       # (sn, agirlik)
     sigara_son_olay = -99.0
@@ -1038,6 +1229,11 @@ def run_inference(video_path):
     KEMER_ARAC_KOPUKLUK_SN = 3.0  # arac bu kadar sn gorunmezse saat sifirlanir
     kemer_kuruldu = False         # kemer modeli en az bir kez calisti mi
     kemer_yokluk_bas = None       # aktif yokluk kosusunun baslangic sn'si
+    # kemer2 (hibrit) surekli-yok durumu
+    kemer2_yok_bas = None
+    kemer2_yok_son = None
+    kemer2_yok_tepe = 0.0
+    kemer2_yok_yazildi = False
     kemer_yokluk_yazilan_son = None  # bu kosuda son yazilan olayin sn'si
     kemer_son_arac_sn = None      # kemer saati icin aracin en son gorulme sn'si
     # KEMER_LOG=1: pipeline'in KENDI kemer zaman serisini dokmek icin gelistirme
@@ -1083,6 +1279,20 @@ def run_inference(video_path):
                 if int(box.cls[0].item()) in [2, 5, 7]:
                     current_car_boxes.append(tuple(map(int, box.xyxy[0])))
         en_buyuk = max(current_car_boxes, key=lambda b: (b[2]-b[0])*(b[3]-b[1])) if current_car_boxes else None
+
+        # SERBEST YAZI okumasi (~1 sn'de bir; kilitlendiyse artik denenmez).
+        # Eski plaka zinciriyle YARISMAZ — secim run_inference sonunda yapilir
+        # (regex'li zincir kilitlendiyse o kazanir).
+        if (ocr_okuyucu is not None and yazi_kilit is None and en_buyuk is not None
+                and global_frame_count % YAZI_OKUMA_ARALIGI == 0):
+            yazi_metin_k, yazi_g = yazi_serit_oku(frame, en_buyuk)
+            anahtar = _yazi_normalize(yazi_metin_k)
+            if len(anahtar) >= 2:
+                yazi_oylar[anahtar] = yazi_oylar.get(anahtar, 0.0) + yazi_g
+                sayaclar = yazi_hamlar.setdefault(anahtar, {})
+                sayaclar[yazi_metin_k] = sayaclar.get(yazi_metin_k, 0) + 1
+                if yazi_oylar[anahtar] >= YAZI_OY_ESIK:
+                    yazi_kilit = anahtar
 
         t_simdi = global_frame_count / fps
 
@@ -1387,6 +1597,8 @@ def run_inference(video_path):
                         kemer_son_ihlal_yazildi = False
                         kemer_yok_baslangic = None
                         kemer_yok_conf_tepe = 0.0
+                        kemer2_yok_bas = None
+                        kemer2_yok_tepe = 0.0
                     elif b_cls == 0 and b_conf >= ESIK["kemer"]:
                         # uzun karar bosluklarinda kosuyu sifirla (surucu kaybolup geri
                         # geldiginde iki ayri kisa "yok" ani tek kosu sayilmasin)
@@ -1506,7 +1718,16 @@ def run_inference(video_path):
 
             if bolge is None:
                 for ad in modeller:
-                    if ad != "kemer": yolo_kayit[ad].append((sn, None))
+                    if ad == "kemer":
+                        continue
+                    if ad == "su" and SU_GENIS_AKTIF:
+                        # Sofor bulunamasa da su aranir: GT 28.9 kosusunun kenar
+                        # donemi ve 63.16 oncesi tam boyle kayboluyordu (07.08
+                        # sondasi). Arac ROI sag-yari + CLAHE, yuksek esik.
+                        g_genis = su_genis_bak(modeller["su"], frame, None, en_buyuk)
+                        yolo_kayit["su"].append((sn, g_genis if g_genis > 0 else None))
+                    else:
+                        yolo_kayit[ad].append((sn, None))
                 off_kayit.append((sn, None))
                 yuz_kayit.append((sn, None))
             else:
@@ -1519,7 +1740,17 @@ def run_inference(video_path):
                     if ad == "kemer":
                         continue  # yukarida arac ROI'sinde ayrica islendi
                     elif ad == "su":
-                        g, kutu = su_bul(model, bolge, ESIK[ad], yuz_sonuc)
+                        if ARACICI_SU:
+                            g, kutu = su_bul(aracici_model, bolge, ESIK[ad], yuz_sonuc, siniflar=[0])
+                        else:
+                            g, kutu = su_bul(model, bolge, ESIK[ad], yuz_sonuc)
+                        if g <= 0 and SU_GENIS_AKTIF:
+                            # dar kirpim bos -> genis baglamli ikinci bakis (olcumle
+                            # eklendi; bkz. su_genis_bak). kutu donmez -> debug cizimi
+                            # guncellenmez, yalnizca zaman serisine yazilir.
+                            g_genis = su_genis_bak(model, frame, sofor_kutusu, en_buyuk)
+                            if g_genis > 0:
+                                g = g_genis
                         yolo_kayit[ad].append((sn, g if g>0 else None))
                         
                         if kutu is not None:
@@ -1579,18 +1810,22 @@ def run_inference(video_path):
                 if arac_roi.size > 0:
                     arac_roi = _arac_roi_parlaklik_duzelt(arac_roi)
                     kisi_sonuc = yolcu_model.track(arac_roi, conf=YOLCU_KISI_ESIK, persist=True, verbose=False)[0]
-                    ic_kisiler = []
+                    # id'siz kutular da toplanir (on-yolcu kurali icin): 07.08 sondasi,
+                    # bu cadence'ta (fps/2) BoT-SORT'un TUM videoda tek id bile
+                    # atamadigini gosterdi (104 kutu, hepsi id=None) -- id sarti
+                    # bu kanali fiilen kapatiyordu.
+                    tum_kisiler = []
                     if kisi_sonuc.boxes is not None:
                         for k in kisi_sonuc.boxes:
-                            if k.id is None:
-                                continue
                             kx1, ky1, kx2, ky2 = k.xyxy[0].tolist()
                             kx1, ky1, kx2, ky2 = kx1+rx1, ky1+ry1, kx2+rx1, ky2+ry1
-                            ic_kisiler.append({
-                                "id": int(k.id.item()), "kutu": (kx1, ky1, kx2, ky2),
+                            tum_kisiler.append({
+                                "id": int(k.id.item()) if k.id is not None else None,
+                                "kutu": (kx1, ky1, kx2, ky2),
                                 "conf": float(k.conf), "merkez_x": (kx1+kx2)/2, "alt_y": ky2,
                                 "alan": (kx2-kx1)*(ky2-ky1),
                             })
+                    ic_kisiler = [b for b in tum_kisiler if b["id"] is not None]
 
                     guvenilir_kisiler = [k for k in ic_kisiler if k["conf"] >= YOLCU_LOCK_MIN_CONF]
 
@@ -1643,6 +1878,44 @@ def run_inference(video_path):
                         if yolcu_ardisik_sayac[pid] >= YOLCU_ARDISIK_GEREK and pid not in yolcu_kilitli_idler:
                             yolcu_kilitli_idler.add(pid)
                             vehicle_events.append(tespit_olustur(global_frame_count / fps, "yolcular", koltuk, b["conf"]))
+
+                    # --- ON YOLCU sol-yari kurali (ID'SIZ -- yukaridaki id-takipli
+                    # sofor cozumlemesine DAYANMAZ, cunku id'ler bu cadence'ta hic
+                    # atanmiyor): sofor = sag-yari en buyuk kutu (o karede), on yolcu
+                    # = sol-yari + conf>=ON_YOLCU_CONF + soforden >= %12 yatay ayrik.
+                    # Tum-video sondasi (07.08): aday YALNIZ GT 98.56 civarinda
+                    # (98.88/99.36, 0.86/0.87), videonun kalaninda sifir tetik. ---
+                    aday_conf = 0.0
+                    sag_kisiler = [b for b in tum_kisiler
+                                   if b["merkez_x"] > arac_orta and b["conf"] >= YOLCU_LOCK_MIN_CONF]
+                    on_sofor = max(sag_kisiler, key=lambda b: b["alan"]) if sag_kisiler else None
+                    if on_sofor is not None:
+                        ayrim = (ax2 - ax1) * ON_YOLCU_AYRIM_ORAN
+                        for b in tum_kisiler:
+                            if b is on_sofor:
+                                continue
+                            if (b["merkez_x"] < arac_orta and b["conf"] >= ON_YOLCU_CONF
+                                    and abs(b["merkez_x"] - on_sofor["merkez_x"]) >= ayrim
+                                    and b["conf"] > aday_conf):
+                                aday_conf = b["conf"]
+                    if aday_conf > 0:
+                        if on_yolcu_son_kare == yolcu_islenen_kare_sirasi - 1:
+                            on_yolcu_ardisik += 1
+                        else:
+                            on_yolcu_ardisik = 1
+                        on_yolcu_son_kare = yolcu_islenen_kare_sirasi
+                        on_yolcu_tepe_conf = max(on_yolcu_tepe_conf, aday_conf)
+                        t_yolcu = global_frame_count / fps
+                        if on_yolcu_ardisik >= ON_YOLCU_ARDISIK_GEREK and (
+                                on_yolcu_yazilan_son is None
+                                or t_yolcu - on_yolcu_yazilan_son >= ON_YOLCU_YENIDEN_SN):
+                            vehicle_events.append(tespit_olustur(
+                                t_yolcu, "yolcular", "on_koltuk", round(on_yolcu_tepe_conf, 2)))
+                            on_yolcu_yazilan_son = t_yolcu
+                            on_yolcu_tepe_conf = 0.0
+                    else:
+                        on_yolcu_ardisik = 0
+                        on_yolcu_tepe_conf = 0.0
 
         # VİDEO ÇİKTISI İÇİN KUTUYU ÇİZ (yalnizca DEBUG_VIDEO=1 iken)
         if out_video is not None:
@@ -1797,23 +2070,57 @@ def run_inference(video_path):
                 best_vid_score = score
                 best_vid = vid
                 
+    # SERBEST YAZI kazanani: kilit yoksa ama toplam oy tabani asan aday varsa
+    # (kisa video / az okuma) onu kabul et. Cikti = en sik gorulen HAM biçim
+    # (Turkce harf/kucuk harf/bosluk korunur; normalize yalniz oylama icindi).
+    yazi_sonuc, yazi_conf = None, 0.0
+    if yazi_kilit is None and yazi_oylar:
+        aday, oy = max(yazi_oylar.items(), key=lambda kv: kv[1])
+        if oy >= YAZI_OY_TABAN:
+            yazi_kilit = aday
+    if yazi_kilit is not None:
+        yazi_sonuc = max(yazi_hamlar[yazi_kilit].items(), key=lambda kv: kv[1])[0]
+        yazi_conf = min(0.95, yazi_oylar[yazi_kilit] / YAZI_OY_ESIK)
+
     if best_vid is not None:
+        # Regex'li plaka zinciri kilitlendi (gercek plaka gorunur) -> o kazanir.
         c = vehicle_confidences.get(best_vid, {})
         ov_conf = (c.get('kasa', 0) + c.get('renk', 0) + c.get('plaka', 0)) / 3.0
         arac = arac_bilgisi_olustur(
-            finalized_types[best_vid], 
-            finalized_plates[best_vid], 
-            finalized_colors[best_vid], 
+            finalized_types[best_vid],
+            finalized_plates[best_vid],
+            finalized_colors[best_vid],
             ov_conf
         )
+    elif yazi_sonuc is not None and finalized_types:
+        # ORTULU PLAKA gunu: plaka zinciri kilitlenemez ama tip/renk kilitli --
+        # tip+renk kilitli en guvenli araci sec, plaka alanina OCR yazisini yaz.
+        aday_vid, aday_skor = None, -1.0
+        for vid in finalized_types:
+            if vid in finalized_colors:
+                c = vehicle_confidences.get(vid, {})
+                s = c.get('kasa', 0) + c.get('renk', 0)
+                if s > aday_skor:
+                    aday_skor, aday_vid = s, vid
+        if aday_vid is not None:
+            c = vehicle_confidences.get(aday_vid, {})
+            ov_conf = (c.get('kasa', 0) + c.get('renk', 0) + yazi_conf) / 3.0
+            arac = arac_bilgisi_olustur(
+                finalized_types[aday_vid], yazi_sonuc,
+                finalized_colors[aday_vid], ov_conf)
+        else:
+            v_t = list(finalized_types.values())[0]
+            arac = arac_bilgisi_olustur(v_t, yazi_sonuc, "beyaz", 0.50)
     else:
         if finalized_types:
             v_t = list(finalized_types.values())[0]
             v_c = list(finalized_colors.values())[0] if finalized_colors else "beyaz"
             v_p = list(finalized_plates.values())[0] if finalized_plates else ""
+            if not v_p and yazi_sonuc is not None:
+                v_p = yazi_sonuc
             arac = arac_bilgisi_olustur(v_t, v_p, v_c, 0.50)
         else:
-            arac = arac_bilgisi_olustur("sedan", "", "beyaz", 0.0)
+            arac = arac_bilgisi_olustur("sedan", yazi_sonuc or "", "beyaz", 0.0)
 
     # SON GUVENLIK KATMANI: FTR sartnamesinin izin verdigi etiket disina cikan hicbir kayit
     # JSON'a yazilmaz -- kategori-etiket eslesmesi GECERLI_* setleriyle dogrulanir.
