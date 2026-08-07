@@ -1,3 +1,15 @@
+import os
+
+# --- LOG SUSTURMA (hakem ekraninda gurultu olmasin; davranisa etkisi yok) ---
+# mediapipe/absl C++ loglari icin ortam degiskenleri IMPORT'lardan ONCE gelmeli.
+os.environ.setdefault("GLOG_minloglevel", "3")        # mediapipe/absl W/I loglari
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")    # TFLite delegate mesajlari
+os.environ.setdefault("YOLO_CONFIG_DIR", "/tmp")      # config-dir uyarisi (kendisi
+                                                      # 'Ultralytics' alt dizinini ekler)
+import logging
+logging.getLogger("ultralytics").setLevel(logging.ERROR)  # IMPORT'TAN ONCE:
+# acilistaki settings/config mesajlari + BoT-SORT "GMC failed" uyarilari susar.
+
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -5,7 +17,6 @@ import math
 import re
 from collections import Counter, deque
 import json
-import os
 
 import warnings
 import mediapipe as mp
@@ -360,7 +371,10 @@ MAR_MIN_ACIKLIK = 0.015    # oran ne kadar buyuk olursa olsun, agiz bu mutlak ac
                            # gecmiyorsa esneme sayilmaz -- taban neredeyse sifira yakinken
                            # (agiz kapaliyken) piksel-alti landmark titremesi oranı 2-3
                            # kat sicratabiliyor, mutlak esik bu gurultuyu eler
-DONUK_OFFSET = 0.30; T_ARKAYA = 3.0; T_ETRAFA_MIN = 1.2
+# T_ARKAYA 3.0->2.7 (07.08 kullanici karari, referans arkadasin kaydi):
+# ayni arkaya-donus iki kayitta 2.9/3.2sn olculdu; sure >= 2.7 arkaya sayilir.
+# Bilincli bedel: 2.7sn olculen sinirdaki etrafa kosulari arkaya'ya kayar.
+DONUK_OFFSET = 0.30; T_ARKAYA = 2.7; T_ETRAFA_MIN = 1.2
 # 07.08 kullanici istegi: ufak yan bakislar etrafa_bakinma SAYILMASIN --
 # kosunun TEPE donme siddeti (|burun-omuz orani|) bu esigi asmali. Arkaya
 # bakma kanallari (sure>=T_ARKAYA + mediapipe yuz-kayip) etkilenmez, ayrim
@@ -1354,7 +1368,10 @@ def run_inference(video_path):
         # --- 1. TEKNOCAN --- (gorunum-gecisi: yeni gorunumde BIR olay)
         # Kadans atlamayla olceklenir -- uzun/4K videolarda sure butcesi icin.
         if global_frame_count % (2 * atlama) == 0:
-            teknocan_results = teknocan_model(frame, conf=0.6, verbose=False)
+            # esik 0.6->0.55 (07.08): tespit guvenleri 0.62-0.66 bandinda sinirda
+            # yasiyordu; mobil/HLS yeniden-sikistirmali kayitta ikisi esik altina
+            # dusup kacti. 0.55 sikistirma payi acar.
+            teknocan_results = teknocan_model(frame, conf=0.55, verbose=False)
             teknocan_kare_conf = 0.0
             for t_res in teknocan_results:
                 for t_box in t_res.boxes:
