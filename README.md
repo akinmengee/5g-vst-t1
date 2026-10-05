@@ -42,26 +42,26 @@ Yarışması** için VST T1 takımı tarafından geliştirilmiştir.
 | [`ai/`](./ai) | Docker imajı (`teknofest-2026/vst-t1`). Videoyu okur, `results.json` yazar, sonlanır. Tek başına da çalıştırılabilir. |
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph M["Mobil (Flutter)"]
         NV["Number Verification"] --> QOD["Quality on Demand"]
-        QOD --> REC["Turkcell stream'ini\nMP4'e kaydet"]
+        QOD --> REC["Yayını MP4'e kaydet"]
     end
 
-    REC -- "video upload" --> B
+    REC -- "video upload" --> UP
 
     subgraph B["Backend (FastAPI)"]
-        UP["POST /api/videos/upload"] --> TRIG["docker run\nteknofest-2026/vst-t1"]
+        UP["POST /api/videos/upload"] --> TRIG["docker run (AI imajı)"]
     end
 
-    TRIG --> AI
+    TRIG --> IN
 
     subgraph AI["AI Docker İmajı (ai/)"]
         IN["/app/data/input/video.mp4"] --> PIPE["predict.py"]
         PIPE --> OUT["/app/data/output/results.json"]
     end
 
-    OUT -- "polling" --> B
+    OUT -- "polling ile sonuç" --> B
     B -- "sonuç JSON" --> M
 ```
 
