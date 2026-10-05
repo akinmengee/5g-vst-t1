@@ -1,187 +1,302 @@
-# 5G VST T1 — Akıllı Yol Güvenliği
+# 5G & Yapay Zekâ ile Akıllı Yol Güvenliği Yarışması
 
-**5G & Yapay Zekâ ile Akıllı Yol Güvenliği Yarışması** (Teknofest) kapsamında
-VST T1 takımının final için geliştirdiği sistem. Mobil uygulama üzerinden
-Number Verification → Quality on Demand → video yükleme akışını yürütür;
-video, ayrı bir Docker imajındaki AI pipeline'ında işlenip araç bilgisi
-(plaka, renk, kasa tipi) ve sürücü/yolcu ihlalleri (telefon kullanımı,
-emniyet kemeri, slalom, esneme, vb.) tespit edilir.
+5G (Number Verification + Quality on Demand) ve yapay zekâ ile araç videosundan
+plaka, renk ve kasa tipini, ayrıca sürücü/yolcu ihlallerini tespit eden yol güvenliği sistemi.
 
-> **Takvim:** Final Yarışma Etabı **7-9 Ağustos 2026**, yüz yüze.
+![Flutter](https://img.shields.io/badge/Flutter-Dart%203.12-02569B?logo=flutter&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Python%203.12-009688?logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/AI%20imaj-Docker%20%2B%20CUDA%2012.1-2496ED?logo=docker&logoColor=white)
+![Platform](https://img.shields.io/badge/mobil-Android-3DDC84?logo=android&logoColor=white)
+
+Proje, TEKNOFEST 2026 kapsamında düzenlenen **5G & Yapay Zekâ ile Akıllı Yol Güvenliği
+Yarışması** için VST T1 takımı tarafından geliştirilmiştir.
 
 ## İçindekiler
 
-1. [Proje Hakkında](#proje-hakkında)
-2. [Mimari](#mimari)
-3. [Proje Yapısı](#proje-yapısı)
-4. [Başlarken](#başlarken)
-5. [Durum ve Yol Haritası](#durum-ve-yol-haritası)
-6. [Takım](#takım)
-7. [Daha Fazla Bilgi](#daha-fazla-bilgi)
+1. [Teknoloji Yığını](#teknoloji-yığını)
+2. [Mimari ve Proje Yapısı](#mimari-ve-proje-yapısı)
+3. [Kurulum ve Başlangıç](#kurulum-ve-başlangıç)
+4. [Kullanım](#kullanım)
+5. [Konfigürasyon ve Ortam Değişkenleri](#konfigürasyon-ve-ortam-değişkenleri)
+6. [API / Endpoint'ler](#api--endpointler)
+7. [Testler](#testler)
+8. [Teşekkürler](#teşekkürler)
 
-## Proje Hakkında
+## Teknoloji Yığını
 
-Sistem üç bağımsız parçadan oluşuyor:
+| Katman | Teknolojiler |
+|---|---|
+| Mobil | Flutter (Dart SDK ^3.12.2), `dio`, `provider`, `video_player`, `ffmpeg_kit_flutter_new`, `webview_flutter`, `share_plus` |
+| Backend | Python 3.12, FastAPI, Uvicorn, Pydantic v2 / pydantic-settings, httpx, python-multipart |
+| AI | Python 3, PyTorch 2.3.1 (cu121), Ultralytics (YOLO) 8.4.115, MediaPipe, OpenCV 5.0, ffmpeg |
+| Altyapı | Docker (backend: Docker-outside-of-Docker; AI: `nvidia/cuda:12.1.0`, iki aşamalı build), NVIDIA GPU |
+| 5G | Turkcell Open Gateway (Number Verification, Quality on Demand) |
+| Test | `pytest` (backend), `flutter test` (mobil) |
 
-- **`mobile/`** — Flutter uygulaması. Number Verification, Quality on
-  Demand, video kaydı/yükleme ve AI sonucunun gösterimi. Hiçbir AI/model
-  işi yapmaz, yalnızca orkestrasyon ve arayüz.
-- **`backend/`** — FastAPI. Mobil ile Turkcell Open Gateway arasında
-  aracılık eder, video yüklenince AI imajını tetikler, sonucu mobile
-  döner. Kendi torch/opencv bağımlılığı yoktur — ince bir katmandır.
-- **`ai/`** — Hakemin de bağımsız olarak çalıştıracağı Docker imajı
-  (`teknofest-2026/vst-t1`). Videoyu okur, `results.json` yazar, sonlanır.
+## Mimari ve Proje Yapısı
 
-Bu üçlü ayrışma **3 Ağustos 2026'da organizasyondan gelen 9 resmi
-dokümanın** (Final Yarışma Senaryosu, FTR teslim dokümanı, Turkcell Open
-Gateway spesifikasyonları, Operasyon Rehberi vb.) tarif ettiği resmi final
-akışına birebir dayanıyor. Projenin daha önceki bir sürümü farklı bir
-mimari (mobilde edge AI + WebSocket) izliyordu; bu mimari organizasyonun
-resmi akışıyla çeliştiği için tamamen terk edildi — bugün kodda veya
-dokümanlarda bundan hiçbir iz yok.
-
-Kararların *neden* böyle alındığına, tamamlanan işlere ve yol haritasına
-dair detay için bkz. **[`PLAN.md`](./PLAN.md)**.
-
-## Mimari
+| Klasör | Rol |
+|---|---|
+| [`mobile/`](./mobile) | Flutter uygulaması: Number Verification, QoD, video kaydı/yükleme ve AI sonucunun gösterimi. Model çalıştırmaz, yalnızca orkestrasyon ve arayüzdür. |
+| [`backend/`](./backend) | FastAPI. Mobil ile Turkcell Open Gateway arasında aracılık eder, video yüklenince AI imajını tetikler, sonucu mobile döner. Torch/opencv bağımlılığı yoktur. |
+| [`ai/`](./ai) | Docker imajı (`teknofest-2026/vst-t1`). Videoyu okur, `results.json` yazar, sonlanır. Tek başına da çalıştırılabilir. |
 
 ```mermaid
 flowchart LR
-    subgraph M["📱 Mobil (Flutter)"]
+    subgraph M["Mobil (Flutter)"]
         NV["Number Verification"] --> QOD["Quality on Demand"]
         QOD --> REC["Turkcell stream'ini\nMP4'e kaydet"]
     end
 
     REC -- "video upload" --> B
 
-    subgraph B["🖥️ Backend (FastAPI)"]
+    subgraph B["Backend (FastAPI)"]
         UP["POST /api/videos/upload"] --> TRIG["docker run\nteknofest-2026/vst-t1"]
     end
 
     TRIG --> AI
 
-    subgraph AI["🤖 AI Docker İmajı (ai/)"]
+    subgraph AI["AI Docker İmajı (ai/)"]
         IN["/app/data/input/video.mp4"] --> PIPE["predict.py"]
         PIPE --> OUT["/app/data/output/results.json"]
     end
 
     OUT -- "polling" --> B
     B -- "sonuç JSON" --> M
-
-    JUDGE["👤 Hakemin Web UI'ı"] -. "aynı imajı\nbağımsız çalıştırır" .-> AI
 ```
-
-Sistemde **sahte (mock) hiçbir mod yoktur**: Turkcell çağrıları her zaman
-gerçek Open Gateway'e, video her zaman gerçek `ai/` imajına gider. Gerçek
-credential ve SIM geldikten sonra (7 Ağustos) mock istemci, `USE_MOCK_5G`
-anahtarı ve sahte onay sayfası tamamen kaldırıldı — bir çağrı başarısız
-olursa hata olduğu gibi yüzeye çıkar, üretilmiş bir sonuçla maskelenmez.
-
-## Proje Yapısı
 
 ```text
 5g-vst-t1/
-├── PLAN.md                 # Mimari kararlar, yol haritası, açık riskler — TEK doğruluk kaynağı
-├── note.md                 # Kod inceleme / bug düzeltme geçmişi (kronolojik)
 ├── README.md
-├── ai/                     # Hakemin çalıştıracağı Docker imajı (teknofest-2026/vst-t1)
+├── ai/                     # AI Docker imajı (teknofest-2026/vst-t1)
 │   ├── main.py, Dockerfile, requirements.txt
 │   ├── src/predict.py, utils.py
 │   └── weights/            # Model ağırlıkları (git'e girmez)
 ├── backend/                # FastAPI orkestrasyon katmanı
-│   ├── Dockerfile          # Backend'in kendi imajı (vst-t1-backend, teknofest-2026/ öneksiz)
-│   └── app/api/, services/network/, services/orchestration/
+│   ├── Dockerfile          # Backend'in kendi imajı (vst-t1-backend)
+│   ├── app/api/            # Route'lar: auth, qod, videos, health
+│   ├── app/services/       # network/ (Turkcell istemcisi), orchestration/ (AI çalıştırıcı)
+│   └── tests/
 └── mobile/                 # Flutter uygulaması
-    └── lib/
+    ├── lib/                # config, models, screens, services, state, theme, widgets
+    └── test/
 ```
 
-Not: `docs/mobile-integration.md` / `docs/ai-integration.md` 6 Ağustos'ta
-kaldırıldı — sözleşmeler artık kod + testlerle kanıtlanıyor (bkz. `PLAN.md`
-"Neden Mimari Değişti").
+## Kurulum ve Başlangıç
 
-## Başlarken
+### Önkoşullar
 
-Her parçanın kendi kurulum/çalıştırma talimatı kendi klasöründe:
+| Parça | Gereksinim |
+|---|---|
+| Backend | Python 3.12, `pip` (Docker ile çalıştıracaksanız Docker) |
+| Mobil | Flutter, Dart SDK ≥ 3.12.2, Android cihaz veya emülatör. Number Verification yalnızca hücresel veri bağlantılı gerçek bir SIM ile çalışır, Wi-Fi üzerinde Turkcell doğrulamayı reddeder |
+| AI | Docker, NVIDIA GPU sürücüsü ve container toolkit (CUDA 12.1 uyumlu), `ai/weights/` altında model ağırlıkları |
+| Genel | Git, Turkcell Open Gateway `client_id` / `client_secret` |
 
-- **Backend:** [`backend/README.md`](./backend/README.md) — yerel
-  `uvicorn app.main:app --reload` ile ya da kendi Docker imajıyla
-  (`backend/Dockerfile`, VM'de kullanılan yöntem) çalıştırılabilir; ortam
-  değişkenleri, endpoint listesi, test komutları orada.
-- **Mobil:** [`mobile/README.md`](./mobile/README.md) — `flutter run
-  --dart-define=BACKEND_URL=...` (+ `--dart-define=HLS_URL=...` final
-  günü stream adresi değişirse), bilinen platform kısıtları (Windows
-  masaüstünde NV WebView test edilemez — `webview_flutter` yalnızca
-  Android/iOS destekliyor).
-- **AI:** `docker build -t teknofest-2026/vst-t1:latest ai/` ile imaj
-  build edilir; çalışma sözleşmesi, açık riskler ve doğrulama durumu
-  [`PLAN.md`](./PLAN.md)'de.
+> Model ağırlıkları (`ai/weights/`) repoya dahil değildir. AI imajını build etmeden önce
+> ağırlık dosyalarını bu klasöre koymanız gerekir.
 
-Üçünü birlikte, gerçek bir backend + gerçek AI imajına karşı test etmek
-için:
+### Hızlı başlangıç (yerel)
+
+```bash
+git clone https://github.com/akinmengee/5g-vst-t1.git
+cd 5g-vst-t1
+```
+
+**1. Backend**
 
 ```bash
 cd backend
-# Turkcell kimlik bilgileri .env'den okunur; eksikse uygulama açılışta durur.
-JOB_STORAGE_PATH=./.local-jobs python -m uvicorn app.main:app --port 8000
+python -m venv .venv
+.venv\Scripts\activate            # Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt   # hafif, ML bağımlılığı yok
+# .env dosyasını oluşturun (bkz. Konfigürasyon ve Ortam Değişkenleri)
+uvicorn app.main:app --reload
 ```
+
+**2. Mobil**
 
 ```bash
 cd mobile
+flutter pub get
 flutter run --dart-define=BACKEND_URL=http://localhost:8000
 ```
 
-## Durum ve Yol Haritası
+> Gerçek telefonda `localhost` telefonun kendisidir; `BACKEND_URL` olarak backend'in
+> çalıştığı makinenin adresini (örneğin bilgisayarınızın yerel ağ IP'sini) verin.
 
-- [x] **Backend ↔ Mobil** — NV/QoD/video akışının tamamı gerçek HTTP ile
-  uçtan uca doğrulandı (yerelde, VM'de bare process olarak, VM'de
-  container olarak — üçü de birebir aynı sonuç).
-- [x] **AI imajı** — build alıyor, GPU'da (Tesla T4) çalışıyor, gerçek
-  yarışma videosundan şema-geçerli sonuç üretiyor.
-- [x] **Uçtan uca** — mobil servis kodu → backend → gerçek AI imajı →
-  sonuç zinciri baştan sona kanıtlandı.
-- [x] **Backend, kendi Docker imajı olarak VM'de çalışıyor**
-  (`vst-t1-backend`, `teknofest-2026/` öneksiz), `--restart
-  unless-stopped` ile çökme/reboot sonrası kendiliğinden ayağa kalkıyor —
-  gerçek bir çökme simüle edilerek doğrulandı.
-- [x] **VM doğrulaması (Faz C) 4/4 tamamlandı** — organizasyonun Web
-  UI'ından proje oluşturulup Execute çalıştırıldı, `EXECUTION COMPLETED –
-  status: SUCCESS` alındı. İmaj boyutu için resmî bir sınır **yok**
-  (önceki "8GB FTR limiti" iddiası yalnızca FTR-fazına özel bir
-  dokümandan geliyordu, Final'e uygulanmıyor — organizasyon Q&A'sinde
-  netleşti). Çalışma süresi rahat (1080p için 436sn, limit 600sn) —
-  gerçek stream'de zaten 4K yok, yalnızca 1080p/240p.
-- [x] **Turkcell `client_id`/`secret` alındı** — gerçek NV ve QoD canlı
-  çalıştı (7 Ağustos gecesi, gerçek SIM ile). Ardından mock tamamen
-  kaldırıldı: kodda sahte bir veri yolu kalmadı.
-- [x] **Yarışma SIM'inin hızları netleşti** — QoD'siz 256 kbit/s, QoD'li
-  8 Mbit/s. Stream'in VOD olduğu (canlı yayın değil) doğrulandı, bu yüzden
-  kayıt kalitesi QoD durumuna göre seçiliyor: QoD varsa 1080p, yoksa 240p.
-- [ ] **7 Ağustos 21:00** — AI imajı dondurulup SHA256 (image ID) alınacak.
-- [ ] **Yarışma SIM'i ile uçtan uca kuru prova** — kayıt + Lifebox + backend
-  aktarımının 5 dakikalık pencereye sığdığı ölçülecek.
+**3. AI imajı**
 
-Detaylı yol haritası, açık riskler, organizasyon Q&A netleştirmeleri ve
-PDF-PDF sistematik doğrulama sonuçları için bkz. **[`PLAN.md`](./PLAN.md)**;
-düzeltilen bug'ların dosya/satır referanslı kaydı için **[`note.md`](./note.md)**.
+```bash
+docker build -t teknofest-2026/vst-t1:latest ai/
+```
 
-## Takım
+### Alternatif: backend'i Docker imajı olarak çalıştırma
 
-| Rol | Sorumluluk |
-|---|---|
-| Akademik Danışman | Proje takibi ve danışmanlık |
-| Kaptan — Sunucu ve Veri Tabanı Mimarı | Backend mimarisi (bu repo) |
-| 5G API Entegrasyonu | Turkcell Open Gateway (Number Verification, QoD) entegrasyonu |
-| Yapay Zekâ / Görüntü İşleme | AI pipeline'ı, model geliştirme, doğruluk iyileştirme |
-| Sistem Entegrasyonu ve Test | Uçtan uca test, saha provaları |
-| Mobil Uygulama Geliştirici | Flutter uygulaması |
+Backend kendi içinden `docker run` ile AI imajını tetiklediği için host'un
+`/var/run/docker.sock`'u ve `JOB_STORAGE_PATH`'in **host'taki path ile birebir aynı
+path'te** container'a mount edilmesi şarttır.
 
-## Daha Fazla Bilgi
+```bash
+docker build -t vst-t1-backend:latest backend/
+docker run -d --name vst-t1-backend --restart unless-stopped \
+  -p 8080:8080 \
+  --env-file /home/<kullanici>/backend.env \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /home/<kullanici>/jobs:/home/<kullanici>/jobs \
+  vst-t1-backend:latest
+```
 
-- **[`PLAN.md`](./PLAN.md)** — mimari kararlar, gerekçeler, tamamlanan
-  işler, yol haritası, açık riskler, organizasyon Q&A netleştirmeleri,
-  doğrulama planı.
-- **[`note.md`](./note.md)** — düzeltilen/açık bug'ların dosya:satır
-  referanslı, kronolojik kaydı.
-- **[`backend/README.md`](./backend/README.md)**,
-  **[`mobile/README.md`](./mobile/README.md)** — parçaya özel kurulum,
-  endpoint'ler, ortam değişkenleri ve bilinen kısıtlar.
+### Alternatif: Android APK
+
+```bash
+cd mobile
+flutter build apk --release --split-per-abi   # cihaz başına küçük APK (arm64 ~62 MB)
+```
+
+## Kullanım
+
+Uygulamadaki akış: telefon numarasıyla Number Verification → "QoD Aç" → "Akış"
+sekmesinde yayın adresini girip kayıt → backend'e yükleme ve Lifebox paylaşımı →
+"AI Sonucu" ekranında tespitlerin görüntülenmesi.
+
+Backend adresi ve yayın adresi çalıştırma zamanında verilir, koda gömülü değildir:
+
+```bash
+flutter run --dart-define=BACKEND_URL=http://<BACKEND_IP>:8080 \
+            --dart-define=HLS_URL=https://.../playlist.m3u8 \
+            --dart-define=PHONE=+90...      # NV alanını ön-doldurur (opsiyonel)
+```
+
+Yayın adresi uygulama içindeki "AKIŞ ADRESİ" alanından da değiştirilebilir, yeniden
+build gerekmez.
+
+AI imajını backend olmadan tek başına çalıştırmak için:
+
+```bash
+docker run --rm --gpus all \
+  -v <video_klasoru>:/app/data/input \
+  -v <cikti_klasoru>:/app/data/output \
+  teknofest-2026/vst-t1:latest
+# giriş: /app/data/input/video.mp4  →  çıkış: /app/data/output/results.json
+```
+
+**Yavaş bağlantıyı simüle etme (yalnızca test için, üretim build'inde kullanılmaz):**
+
+```bash
+flutter run --dart-define=TEST_REALTIME_PACE=true   # kayıt, yayının kendi bit hızında okunur
+flutter run --dart-define=TEST_UPLOAD_KBPS=256      # yükleme yapay olarak kısıtlanır
+```
+
+**Örnek `results.json`:**
+
+```json
+{
+  "video_id": "video.mp4",
+  "arac_bilgisi": { "tip": "sedan", "plaka": "34ABC123", "renk": "beyaz", "confidence_score": 0.91 },
+  "tespitler": [
+    { "zaman_saniye": 12.5, "kategori": "sofor_eylemi", "etiket": "telefonla_konusma", "confidence_score": 0.87 }
+  ]
+}
+```
+
+`kategori`: `sofor_eylemi` | `nesneler` | `yolcular`. Etiketler ASCII ve küçük harftir
+(`arkaya_bakma`, `esneme`, `sigara_icme`, `su_icme`, `telefonla_konusma`, `slalom`,
+`etrafa_bakinma`, `emniyet_kemeri_ihlali`, `teknocan`, `bilgisayar`, `arka_koltuk_1`,
+`arka_koltuk_2`, `on_koltuk`).
+
+## Konfigürasyon ve Ortam Değişkenleri
+
+Backend ayarları `.env` dosyasından veya shell'den okunur. Turkcell kimlik bilgileri
+eksikse uygulama **açılışta** `RuntimeError` verir.
+
+| Değişken | Varsayılan | Açıklama |
+|---|---|---|
+| `TURKCELL_API_BASE_URL` | boş | `https://opengateway.turkcell.com.tr` |
+| `TURKCELL_CLIENT_ID` / `TURKCELL_CLIENT_SECRET` | boş | OAuth2 kimlik bilgileri (yalnızca backend'de tutulur) |
+| `TURKCELL_REDIRECT_URI` | boş | Turkcell'e kayıtlı callback: `http://<BACKEND_IP>:8080/api/auth/callback` |
+| `QOD_DURATION_SECONDS` | `1200` | QoD oturum süresi. Oturum bitince cihazın veri bağlantısı kopar, bu yüzden süre tüm kullanımı kapsamalıdır |
+| `AI_DOCKER_IMAGE` | `teknofest-2026/vst-t1:latest` | Tetiklenecek AI imajı |
+| `JOB_STORAGE_PATH` | `/srv/jobs` | Job giriş/çıkış klasörleri. **Windows'ta override edilmelidir** (örn. `./.local-jobs`) |
+| `JOB_TIMEOUT_SECONDS` | `600` | AI çalıştırma üst sınırı (10 dk) |
+| `FLOW_TTL_SECONDS` | `1200` | İşlem görmeyen NV/QoD flow'larının hafızadan düşme süresi |
+| `JOB_RESULT_TTL_SECONDS` | `3600` | DONE/FAILED job kayıtlarının saklanma süresi |
+| `LOG_LEVEL` | `INFO` | |
+
+Örnek `.env` / `backend.env` şablonu (gerçek değerleri repoya **asla** eklemeyin):
+
+```env
+TURKCELL_API_BASE_URL=https://opengateway.turkcell.com.tr
+TURKCELL_CLIENT_ID=<client_id>
+TURKCELL_CLIENT_SECRET=<client_secret>
+TURKCELL_REDIRECT_URI=http://<BACKEND_IP>:8080/api/auth/callback
+JOB_STORAGE_PATH=./.local-jobs
+AI_DOCKER_IMAGE=teknofest-2026/vst-t1:latest
+LOG_LEVEL=INFO
+```
+
+Mobil tarafta yapılandırma `--dart-define` ile verilir: `BACKEND_URL`, `HLS_URL`,
+`PHONE` (ve yalnızca test için `TEST_REALTIME_PACE`, `TEST_UPLOAD_KBPS`).
+
+## API / Endpoint'ler
+
+| Metot | Yol | Açıklama |
+|---|---|---|
+| `GET` | `/health` | `{"status": "ok"}` |
+| `POST` | `/api/auth/login` | NV akışını başlatır (`flow_id` + `authorize_url`) |
+| `GET` | `/api/auth/callback` | Turkcell'in yönlendirdiği OAuth callback |
+| `GET` | `/api/auth/status/{flow_id}` | NV durumu (mobil poller) |
+| `POST` | `/api/qod/start` | QoD oturumu açar (201 + `REQUESTED` = başarı); yanıtta Turkcell'in gerçekte verdiği `duration` döner |
+| `POST` | `/api/qod/stop` | Oturumu erken kapatmayı dener (en iyi çaba) |
+| `POST` | `/api/videos/upload` | Multipart (`flow_id` + `video`), `202` + `job_id` |
+| `GET` | `/api/videos/{job_id}/result` | `status`: `PROCESSING` \| `DONE` \| `FAILED` + `results` (results.json) |
+
+Örnek akış:
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok"}
+
+curl -F "flow_id=<flow_id>" -F "video=@video.mp4" http://localhost:8000/api/videos/upload
+# 202 {"job_id": "..."}
+
+curl http://localhost:8000/api/videos/<job_id>/result
+# {"status": "DONE", "results": { ...results.json... }}
+```
+
+İstek/yanıt şemalarının tam hali `backend/tests/test_routes_*.py` dosyalarındadır.
+Backend çalışırken Swagger arayüzü
+`http://localhost:8000/docs` adresinde açılır (FastAPI varsayılanı).
+
+## Testler
+
+```bash
+# Backend: ML bağımlılığı gerektirmez
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest -q
+
+# Mobil: backend kapalıysa entegrasyon testleri kendini atlar
+cd mobile
+flutter test
+flutter test test/backend_integration_test.dart   # gerçek servis kodu, gerçek backend
+```
+
+Kod üretimi (codegen) adımı yoktur. Otomatik testler uygulamanın mantığını doğrular;
+gerçek ağ davranışı (yavaş bağlantıda kayıt ve yükleme süreleri gibi) için uygulamayı
+gerçek bir cihazda denemek gerekir.
+
+## Teşekkürler
+
+- **TEKNOFEST** ve yarışma organizasyonu: senaryo, resmi dokümanlar ve Q&A süreci için.
+- **Turkcell**: Open Gateway (Number Verification, Quality on Demand) erişimi ve test SIM'i için.
+- **Akademik danışmanımız**: proje boyunca verdiği destek ve yönlendirme için.
+- Bu projenin dayandığı açık kaynak çalışmalar:
+  [Flutter](https://flutter.dev), [FastAPI](https://fastapi.tiangolo.com),
+  [PyTorch](https://pytorch.org), [Ultralytics YOLO](https://github.com/ultralytics/ultralytics),
+  [MediaPipe](https://github.com/google-ai-edge/mediapipe), [OpenCV](https://opencv.org),
+  [FFmpeg](https://ffmpeg.org) ve [ffmpeg_kit_flutter_new](https://pub.dev/packages/ffmpeg_kit_flutter_new).
+
+---
+
+*Son güncelleme: 6 Ekim 2026.*
